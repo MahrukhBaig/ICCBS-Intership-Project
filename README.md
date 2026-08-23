@@ -213,7 +213,7 @@ These results demonstrate the model's ability to discriminate between the five o
 Grad-CAM was used to investigate the visual regions influencing model predictions.
 
 
-### ### Example  — Original vs Grad-CAM
+### Example  — Original vs Grad-CAM
 
 ![alt text](image.png)
 
