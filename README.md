@@ -212,43 +212,11 @@ These results demonstrate the model's ability to discriminate between the five o
 
 Grad-CAM was used to investigate the visual regions influencing model predictions.
 
-The visualizations provide an additional layer of interpretability by showing where the model focuses when making a classification decision.
 
-### Example 1 — Grad-CAM
+### ### Example  — Original vs Grad-CAM
 
-**[ ADD GRAD-CAM IMAGE HERE ]**
+![alt text](image.png)
 
-```text
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│              ADD GRAD-CAM IMAGE HERE                 │
-│                                                      │
-└──────────────────────────────────────────────────────┘
-```
-
-### Example 2 — Original vs Grad-CAM
-
-**[ ADD IMAGE HERE ]**
-
-```text
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│           ORIGINAL → HEATMAP → OVERLAY              │
-│                                                      │
-└──────────────────────────────────────────────────────┘
-```
-
-### Example 3 — Additional Explainability Results
-
-**[ ADD GRAD-CAM IMAGE HERE ]**
-
-```text
-┌──────────────────────────────────────────────────────┐
-│                                                      │
-│              ADD VISUALIZATION HERE                  │
-│                                                      │
-└──────────────────────────────────────────────────────┘
-```
 
 > These visualizations are intended for research and interpretability analysis and should not be considered a substitute for expert pathological assessment.
 
