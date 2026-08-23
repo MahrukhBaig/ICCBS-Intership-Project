@@ -262,33 +262,33 @@ ICCBS-Intership-Project/
 
 Contains the experimental pipeline including:
 
-Dataset preparation and organization
-Image preprocessing
-Image augmentation
-Dataset splitting
-Swin Transformer backbone
-CLIP-based semantic guidance
-Multi-stage feature extraction
-Cross-attention
-Feature fusion
-U-Net-inspired architecture
-Model training and fine-tuning
-Validation and testing
-Performance evaluation
-Classification metrics
+* Dataset preparation and organization
+* Image preprocessing
+* Image augmentation
+* Dataset splitting
+* Swin Transformer backbone
+* CLIP-based semantic guidance
+* Multi-stage feature extraction
+* Cross-attention
+* Feature fusion
+* U-Net-inspired architecture
+* Model training and fine-tuning
+* Validation and testing
+* Performance evaluation
+* Classification metrics
 
 ### Notebook 02 — ORAL AI Inference & Explainability
 
 Contains the inference and explainability pipeline including:
 
-Trained model loading
-Histopathology image preprocessing
-Five-class prediction
-Prediction confidence
-Class probability distribution
-Grad-CAM generation
-Original / heatmap / overlay visualization
-Interactive Gradio interface
+* Trained model loading
+* Histopathology image preprocessing
+* Five-class prediction
+* Prediction confidence
+* Class probability distribution
+* Grad-CAM generation
+* Original / heatmap / overlay visualization
+* Interactive Gradio interface
 
 ---
 
