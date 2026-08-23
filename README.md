@@ -254,8 +254,6 @@ ICCBS-Intership-Project/
 │       prediction pipeline, and Gradio interface
 │
 ├── README.md
-│
-└── requirements.txt
 ```
 
 ### Notebook 01 — Model Training & Evaluation
