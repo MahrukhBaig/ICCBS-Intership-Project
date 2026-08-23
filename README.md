@@ -244,9 +244,14 @@ The trained model was integrated into an interactive application that allows use
 ```text
 ICCBS-Intership-Project/
 │
-├── 01_Model_Training_and_Evaluation.ipynb
+├── Oral_Histopathology_Backend.ipynb
+│   └── Model development, training, evaluation,
+│       Swin Transformer + CLIP architecture,
+│       preprocessing, and experimentation
 │
-├── 02_Oral_AI_Inference_and_GradCAM.ipynb
+├── Oral_Histopathology_Frontend.ipynb
+│   └── Model inference, Grad-CAM explainability,
+│       prediction pipeline, and Gradio interface
 │
 ├── README.md
 │
@@ -257,37 +262,33 @@ ICCBS-Intership-Project/
 
 Contains the experimental pipeline including:
 
-* Dataset preparation
-* Image preprocessing
-* Data augmentation
-* Dataset splitting
-* Swin Transformer configuration
-* CLIP semantic guidance
-* Feature extraction
-* Cross-attention
-* Feature fusion
-* Model training
-* Validation
-* Test evaluation
-* Performance metrics
-* Five-class prediction
-* Confidence estimation
-* Class probability distribution
-* Grad-CAM generation
-* Visualization
+Dataset preparation and organization
+Image preprocessing
+Image augmentation
+Dataset splitting
+Swin Transformer backbone
+CLIP-based semantic guidance
+Multi-stage feature extraction
+Cross-attention
+Feature fusion
+U-Net-inspired architecture
+Model training and fine-tuning
+Validation and testing
+Performance evaluation
+Classification metrics
 
 ### Notebook 02 — ORAL AI Inference & Explainability
 
 Contains the inference and explainability pipeline including:
 
-* Model loading
-* Image preprocessing
-* Five-class prediction
-* Confidence estimation
-* Class probability distribution
-* Grad-CAM generation
-* Visualization
-* Interactive Gradio application
+Trained model loading
+Histopathology image preprocessing
+Five-class prediction
+Prediction confidence
+Class probability distribution
+Grad-CAM generation
+Original / heatmap / overlay visualization
+Interactive Gradio interface
 
 ---
 
