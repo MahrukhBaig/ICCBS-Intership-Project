@@ -5,6 +5,8 @@
 import os
 import re
 import glob
+import uuid
+import tempfile
 import numpy as np
 import torch
 import torch.nn as nn
@@ -57,6 +59,21 @@ IMG_SIZE = 224
 
 device = torch.device(
     "cuda" if torch.cuda.is_available() else "cpu"
+)
+
+# ------------------------------------------------------------
+# Directory for Grad-CAM output PNGs. See _save_temp_png below
+# for why we write real files instead of passing PIL objects
+# straight through Gradio.
+# ------------------------------------------------------------
+TEMP_IMG_DIR = os.path.join(
+    tempfile.gettempdir(),
+    "oral_ai_outputs"
+)
+
+os.makedirs(
+    TEMP_IMG_DIR,
+    exist_ok=True
 )
 
 MODEL_PATH = os.path.join(
@@ -841,6 +858,32 @@ target_layer = (
 
 
 # ============================================================
+# SAFE PNG WRITER FOR OUTPUT IMAGES
+# ============================================================
+
+def _save_temp_png(
+    pil_img,
+    prefix
+):
+
+    filename = (
+        f"{prefix}_{uuid.uuid4().hex}.png"
+    )
+
+    filepath = os.path.join(
+        TEMP_IMG_DIR,
+        filename
+    )
+
+    pil_img.save(
+        filepath,
+        format="PNG"
+    )
+
+    return filepath
+
+
+# ============================================================
 # GENERATE GRAD-CAM
 # ============================================================
 
@@ -928,40 +971,63 @@ def generate_gradcam(
 
 
     # ========================================================
-    # CONVERT TO PIL BEFORE RETURNING
+    # CONVERT TO PIL, THEN WRITE REAL PNG FILES
     # ========================================================
-    # Raw numpy arrays from show_cam_on_image / the manual
-    # normalization above can be non-contiguous or otherwise
-    # hit edge cases that gr.Image doesn't reliably render
-    # (shows as a blank/black box with no error). Converting
-    # explicitly to PIL.Image is the most reliable type for
-    # gr.Image to display.
+    # Converting to PIL wasn't enough on its own — these three
+    # images kept rendering as blank/black boxes in the browser
+    # even though the underlying arrays were valid (confirmed:
+    # once the dark-theme CSS was fixed separately, the boxes
+    # turned white/empty instead of black — i.e. no image data
+    # was ever reaching the <img> tag, not a color problem).
+    #
+    # This is a known failure mode when passing PIL/numpy image
+    # objects straight through Gradio's in-memory output
+    # pipeline. Writing each image to a real PNG file on disk
+    # and returning the *filepath* instead sidesteps that
+    # pipeline entirely — the component just requests the file
+    # like a normal static asset — and is the standard, reliable
+    # fix for this exact symptom.
 
     original_pil = Image.fromarray(
         np.ascontiguousarray(
             (rgb_image * 255).astype(np.uint8)
         )
-    )
+    ).convert("RGB")
 
     heatmap_pil = Image.fromarray(
         np.ascontiguousarray(
             heatmap.astype(np.uint8)
         )
-    )
+    ).convert("RGB")
 
     overlay_pil = Image.fromarray(
         np.ascontiguousarray(
             overlay.astype(np.uint8)
         )
+    ).convert("RGB")
+
+    original_path = _save_temp_png(
+        original_pil,
+        "original"
+    )
+
+    heatmap_path = _save_temp_png(
+        heatmap_pil,
+        "heatmap"
+    )
+
+    overlay_path = _save_temp_png(
+        overlay_pil,
+        "overlay"
     )
 
     return (
 
-        original_pil,
+        original_path,
 
-        heatmap_pil,
+        heatmap_path,
 
-        overlay_pil
+        overlay_path
     )
 
 
@@ -2810,12 +2876,14 @@ with gr.Blocks(
 
             original_output = gr.Image(
 
-                type="pil",
+                type="filepath",
 
                 label=
                     "Original Image",
 
                 height=320,
+
+                interactive=False,
 
                 elem_classes=[
                     "image-frame"
@@ -2825,12 +2893,14 @@ with gr.Blocks(
 
             heatmap_output = gr.Image(
 
-                type="pil",
+                type="filepath",
 
                 label=
                     "Grad-CAM Attention",
 
                 height=320,
+
+                interactive=False,
 
                 elem_classes=[
                     "image-frame"
@@ -2840,12 +2910,14 @@ with gr.Blocks(
 
             overlay_output = gr.Image(
 
-                type="pil",
+                type="filepath",
 
                 label=
                     "Grad-CAM Overlay",
 
                 height=320,
+
+                interactive=False,
 
                 elem_classes=[
                     "image-frame"
