@@ -1224,10 +1224,55 @@ def ui_predict_production(
 
 
 # ============================================================
+# FORCE LIGHT THEME
+# ============================================================
+# Gradio applies dark-mode background variables when the
+# browser/OS reports a dark color scheme. Empty output
+# gr.Image components (before a prediction has run) pick up
+# that dark background, which is what makes them render as
+# solid black boxes even though CUSTOM_CSS sets .image-frame
+# to white. Forcing __theme=light on load fixes this at the
+# source instead of chasing every internal Gradio class.
+
+FORCE_LIGHT_THEME_JS = """
+function forceLightTheme() {
+    const url = new URL(window.location);
+    if (url.searchParams.get('__theme') !== 'light') {
+        url.searchParams.set('__theme', 'light');
+        window.location.href = url.href;
+    }
+}
+"""
+
+
+# ============================================================
 # PRODUCTION CSS — CELL 19 STYLE
 # ============================================================
 
 CUSTOM_CSS = """
+
+/* =========================================================
+   GLOBAL FONT — applies to everything, including native
+   Gradio components (labels, buttons, dropzone text), so
+   custom gr.HTML() headers and native Gradio UI don't
+   visibly mismatch.
+========================================================= */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+*,
+*::before,
+*::after {
+
+    font-family:
+        'Inter',
+        -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        Roboto,
+        sans-serif !important;
+}
+
 
 html,
 body,
@@ -1241,6 +1286,14 @@ body,
     min-height: 100vh !important;
 
     background: #f4f7fb !important;
+
+    font-family:
+        'Inter',
+        -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        Roboto,
+        sans-serif !important;
 }
 
 
@@ -1259,6 +1312,14 @@ body,
     background: #f4f7fb !important;
 
     color: #1e293b !important;
+
+    font-family:
+        'Inter',
+        -apple-system,
+        BlinkMacSystemFont,
+        'Segoe UI',
+        Roboto,
+        sans-serif !important;
 }
 
 
@@ -1606,6 +1667,129 @@ body,
 .image-frame label span {
     color: #334155 !important;
     opacity: 1 !important;
+}
+
+/* =========================================================
+   FORCE LIGHT BACKGROUNDS ON EMPTY IMAGE CONTAINERS
+   (fallback in case theme detection ever misfires — the
+   FORCE_LIGHT_THEME_JS above is the primary fix)
+========================================================= */
+
+.image-frame,
+.image-frame > div,
+.image-frame [data-testid="image"],
+.image-frame .empty,
+.image-frame .wrap {
+    background: #ffffff !important;
+}
+
+.image-frame .empty svg,
+.image-frame .empty svg path {
+    color: #94a3b8 !important;
+    fill: #94a3b8 !important;
+}
+
+/* =========================================================
+   COMPONENT LABEL BADGES (the small floating tag Gradio
+   draws on top of every component, e.g. "Upload
+   Histopathology Image", "Class Probability Distribution").
+
+   Gradio's Svelte build uses randomized/scoped class names,
+   so targeting classes directly (.block-label etc.) is
+   unreliable and can silently match nothing. The colors for
+   this chip actually come from Gradio's own CSS custom
+   properties, so overriding those variables is the robust
+   fix — it works regardless of the internal class names.
+========================================================= */
+
+.gradio-container {
+    --block-label-background-fill: #eef4ff !important;
+    --block-label-text-color: #1e293b !important;
+    --block-label-border-color: #dbe3ef !important;
+    --block-label-shadow: none !important;
+    --block-label-margin: 0 !important;
+
+    /* Gradio's Default theme ships an orange primary button
+       color via these variables. #analyze_button button below
+       already overrides the rendered button directly, but some
+       Gradio builds resolve variant="primary" styling straight
+       from these variables before the element-level rule is
+       applied, so the button can still flash/render orange.
+       Overriding the source variables closes that gap. */
+    --button-primary-background-fill: linear-gradient(135deg, #2563eb, #38bdf8) !important;
+    --button-primary-background-fill-hover: linear-gradient(135deg, #1d4ed8, #0ea5e9) !important;
+    --button-primary-border-color: transparent !important;
+    --button-primary-border-color-hover: transparent !important;
+    --button-primary-text-color: #ffffff !important;
+}
+
+/* Belt-and-suspenders: also catch it via the stable
+   data-testid attribute Gradio sets on this element. */
+[data-testid="block-label"],
+.image-frame [data-testid="block-label"],
+.probability-card [data-testid="block-label"] {
+    background: #eef4ff !important;
+    color: #1e293b !important;
+    border: 1px solid #dbe3ef !important;
+    box-shadow: none !important;
+    opacity: 1 !important;
+}
+
+[data-testid="block-label"] svg,
+[data-testid="block-label"] * {
+    color: #1e293b !important;
+    fill: #1e293b !important;
+    opacity: 1 !important;
+}
+
+[data-testid="block-label"] svg {
+    background: transparent !important;
+    width: 14px !important;
+    height: 14px !important;
+}
+
+/* =========================================================
+   PROBABILITY CARD (gr.Label) — DARK BACKGROUND FIX
+   gr.Label is a different component type from gr.Image, so
+   the .image-frame overrides above don't reach it. It needs
+   its own background + text-color overrides, including its
+   empty-state icon.
+========================================================= */
+
+.probability-card,
+.probability-card > div,
+.probability-card .wrap,
+.probability-card .container,
+.probability-card [data-testid="label"] {
+    background: #ffffff !important;
+}
+
+.probability-card .empty,
+.probability-card .empty * {
+    background: #ffffff !important;
+}
+
+.probability-card .empty svg,
+.probability-card .empty svg path {
+    color: #94a3b8 !important;
+    fill: #94a3b8 !important;
+}
+
+.probability-card label,
+.probability-card .label,
+.probability-card td,
+.probability-card th,
+.probability-card span,
+.probability-card p {
+    color: #1e293b !important;
+}
+
+/* Confidence bars inside gr.Label keep their accent color,
+   but the track/background behind them should stay light */
+.probability-card .bar,
+.probability-card .bar-container,
+.probability-card .confidence {
+    background: #f1f5f9 !important;
 }
 
 /* =========================================================
@@ -2200,7 +2384,10 @@ with gr.Blocks(
         "ORAL AI — Intelligent Oral Histopathology Analysis",
 
     css=
-        CUSTOM_CSS
+        CUSTOM_CSS,
+
+    js=
+        FORCE_LIGHT_THEME_JS
 
 ) as demo:
 
@@ -2357,7 +2544,7 @@ with gr.Blocks(
 
                 predict_button = gr.Button(
 
-                    "✨ Analyze Image with ORAL AI",
+                    " Analyze Image with ORAL AI",
 
                     variant="primary",
 
