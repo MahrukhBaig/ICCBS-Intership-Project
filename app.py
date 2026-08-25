@@ -927,17 +927,41 @@ def generate_gradcam(
     )
 
 
+    # ========================================================
+    # CONVERT TO PIL BEFORE RETURNING
+    # ========================================================
+    # Raw numpy arrays from show_cam_on_image / the manual
+    # normalization above can be non-contiguous or otherwise
+    # hit edge cases that gr.Image doesn't reliably render
+    # (shows as a blank/black box with no error). Converting
+    # explicitly to PIL.Image is the most reliable type for
+    # gr.Image to display.
+
+    original_pil = Image.fromarray(
+        np.ascontiguousarray(
+            (rgb_image * 255).astype(np.uint8)
+        )
+    )
+
+    heatmap_pil = Image.fromarray(
+        np.ascontiguousarray(
+            heatmap.astype(np.uint8)
+        )
+    )
+
+    overlay_pil = Image.fromarray(
+        np.ascontiguousarray(
+            overlay.astype(np.uint8)
+        )
+    )
+
     return (
 
-        (
-            rgb_image * 255
-        ).astype(
-            np.uint8
-        ),
+        original_pil,
 
-        heatmap,
+        heatmap_pil,
 
-        overlay
+        overlay_pil
     )
 
 
@@ -1226,21 +1250,26 @@ def ui_predict_production(
 # ============================================================
 # FORCE LIGHT THEME
 # ============================================================
-# Gradio applies dark-mode background variables when the
-# browser/OS reports a dark color scheme. Empty output
-# gr.Image components (before a prediction has run) pick up
-# that dark background, which is what makes them render as
-# solid black boxes even though CUSTOM_CSS sets .image-frame
-# to white. Forcing __theme=light on load fixes this at the
-# source instead of chasing every internal Gradio class.
+# The old approach here redirected the page to add
+# ?__theme=light to the URL. That redirect doesn't fire
+# reliably in every context (iframed previews, some Spaces
+# embeds, browsers that block synchronous navigation on
+# load), and when it silently fails Gradio's dark-theme CSS
+# variables stay active — which is what was actually causing
+# the black Grad-CAM boxes AND the washed-out probability
+# text: both were resolving colors from those dark variables,
+# not from a "broken image".
+#
+# Fix: don't depend on a redirect at all. Add the 'dark'-
+# theme-busting class immediately (no navigation), and do the
+# real fix with plain CSS variable overrides below, which
+# apply regardless of whether the browser/OS reports light or
+# dark mode.
 
 FORCE_LIGHT_THEME_JS = """
 function forceLightTheme() {
-    const url = new URL(window.location);
-    if (url.searchParams.get('__theme') !== 'light') {
-        url.searchParams.set('__theme', 'light');
-        window.location.href = url.href;
-    }
+    document.body.classList.remove('dark');
+    document.documentElement.classList.remove('dark');
 }
 """
 
@@ -1259,6 +1288,62 @@ CUSTOM_CSS = """
 ========================================================= */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* =========================================================
+   ROOT FIX — KILL DARK THEME AT THE SOURCE
+
+   This is the actual fix for both the black Grad-CAM/Original/
+   Overlay boxes and the washed-out "osmf" text in the
+   probability card. Both symptoms have the same root cause:
+   Gradio resolves component colors from a shared set of CSS
+   custom properties, and those properties still held their
+   dark-theme values (dark backgrounds, pale/low-contrast
+   text) because the old __theme=light redirect trick didn't
+   reliably neutralize them. The .empty-only overrides further
+   down only ever covered the "no image yet" placeholder state,
+   never the state after a real prediction loads — so a
+   genuinely-loaded Grad-CAM image was still sitting on a dark
+   background variable with no override reaching it.
+
+   Overriding the variables directly, on :root AND on .dark,
+   means every component — image containers, the Label bars,
+   anything we haven't individually targeted below — resolves
+   to light colors no matter what theme class Gradio applies.
+========================================================= */
+
+:root,
+.dark,
+.gradio-container,
+.gradio-container.dark {
+    --body-background-fill: #f4f7fb !important;
+    --background-fill-primary: #ffffff !important;
+    --background-fill-secondary: #f4f7fb !important;
+    --block-background-fill: #ffffff !important;
+    --border-color-primary: #dbe3ef !important;
+    --border-color-accent: #dbe3ef !important;
+    --input-background-fill: #ffffff !important;
+    --color-background-primary: #ffffff !important;
+    --color-background-secondary: #f4f7fb !important;
+    --body-text-color: #1e293b !important;
+    --body-text-color-subdued: #64748b !important;
+    --neutral-50: #ffffff !important;
+    --neutral-100: #f4f7fb !important;
+    --neutral-200: #eef2f7 !important;
+    --neutral-700: #334155 !important;
+    --neutral-800: #1e293b !important;
+    --neutral-900: #172033 !important;
+}
+
+/* Gradio marks components "busy" while your click handler is
+   running (and briefly right after) by dimming them via
+   opacity — this is what produced the washed-out "osmf" text:
+   the Label had actually finished rendering, it was just still
+   wearing the dimmed/pending opacity. Same class can dim the
+   Grad-CAM images too. Force full opacity everywhere. */
+.gradio-container .generating,
+.gradio-container [class*="pending"] {
+    opacity: 1 !important;
+}
 
 *,
 *::before,
@@ -1693,6 +1778,23 @@ body,
     fill: #94a3b8 !important;
 }
 
+/* .empty only ever matches the "no image yet" placeholder —
+   it's removed the moment a real image (Original/Grad-CAM/
+   Overlay) loads, which is exactly when the black boxes showed
+   up, because nothing was left to override the dark background
+   underneath. [data-testid="image"] is a stable hook Gradio
+   sets in both states, so this covers the loaded case too.
+   It only sets background-color, never background-image, so
+   it can't paint over an actual loaded photo. */
+.image-frame [data-testid="image"] {
+    background-color: #ffffff !important;
+}
+
+.image-frame img {
+    background-color: #ffffff !important;
+    opacity: 1 !important;
+}
+
 /* =========================================================
    COMPONENT LABEL BADGES (the small floating tag Gradio
    draws on top of every component, e.g. "Upload
@@ -1789,6 +1891,24 @@ body,
 .probability-card th,
 .probability-card span,
 .probability-card p {
+    color: #1e293b !important;
+}
+
+/* Gradio's Label component renders its top predicted class
+   (e.g. "osmf") using a text color meant to sit on its own
+   colored/dark background. We forced this card's background
+   to white for readability, which left that specific text
+   white-on-white. The selectors above (label/span/p/etc.)
+   didn't happen to match whatever element renders it, so
+   force it directly by targeting the known Gradio class and,
+   as a guaranteed catch-all, every descendant of this card. */
+.probability-card .output-class,
+.probability-card [class*="output-class"] {
+    color: #1e293b !important;
+    background: transparent !important;
+}
+
+.probability-card * {
     color: #1e293b !important;
 }
 
@@ -2690,6 +2810,8 @@ with gr.Blocks(
 
             original_output = gr.Image(
 
+                type="pil",
+
                 label=
                     "Original Image",
 
@@ -2703,6 +2825,8 @@ with gr.Blocks(
 
             heatmap_output = gr.Image(
 
+                type="pil",
+
                 label=
                     "Grad-CAM Attention",
 
@@ -2715,6 +2839,8 @@ with gr.Blocks(
 
 
             overlay_output = gr.Image(
+
+                type="pil",
 
                 label=
                     "Grad-CAM Overlay",
