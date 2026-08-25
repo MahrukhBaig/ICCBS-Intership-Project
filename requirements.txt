@@ -1,4 +1,3 @@
-gradio
 torch
 torchvision
 timm
