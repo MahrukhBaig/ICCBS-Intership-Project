@@ -943,6 +943,55 @@ with col1:
         label_visibility="collapsed",
     )
 
+    # JS: Force-override the dark black uploaded-file chip with white styles
+    st.markdown(
+        """
+        <script>
+        (function() {
+            function fixUploadedFileChip() {
+                // Target every possible container Streamlit uses for the file chip
+                const selectors = [
+                    '[data-testid="stUploadedFile"]',
+                    '[class*="uploadedFileName"]',
+                    '[class*="UploadedFile"]',
+                    '[data-testid="stFileUploader"] section li',
+                    '[data-testid="stFileUploader"] section li > div',
+                    '[data-testid="stFileUploader"] ul li',
+                ];
+                selectors.forEach(function(sel) {
+                    document.querySelectorAll(sel).forEach(function(el) {
+                        el.style.setProperty('background-color', 'white', 'important');
+                        el.style.setProperty('background', 'white', 'important');
+                        el.style.setProperty('color', '#1e293b', 'important');
+                        el.style.setProperty('border', '1px solid #cbd5e1', 'important');
+                        el.style.setProperty('border-radius', '10px', 'important');
+                    });
+                });
+                // Also fix all child elements that may have dark bg
+                document.querySelectorAll('[data-testid="stFileUploader"] section li *').forEach(function(el) {
+                    var bg = window.getComputedStyle(el).backgroundColor;
+                    // If background is dark (rgb values all < 80), override it
+                    var match = bg.match(/rgb\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)/);
+                    if (match) {
+                        var r = parseInt(match[1]), g = parseInt(match[2]), b = parseInt(match[3]);
+                        if (r < 80 && g < 80 && b < 80) {
+                            el.style.setProperty('background-color', 'transparent', 'important');
+                            el.style.setProperty('background', 'transparent', 'important');
+                            el.style.setProperty('color', '#1e293b', 'important');
+                        }
+                    }
+                });
+            }
+            // Run immediately and watch for DOM changes
+            fixUploadedFileChip();
+            var observer = new MutationObserver(function() { fixUploadedFileChip(); });
+            observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
+        })();
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
     input_image = None
     if uploaded_file is not None:
         try:
