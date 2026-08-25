@@ -48,7 +48,37 @@ IMG_SIZE = 224
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+MODEL_URL = "https://huggingface.co/MahrukhB29/oral-ai-model/resolve/main/best_orchid_hybrid_stage2.pth"
 MODEL_PATH = os.path.join(MODEL_DIR, "best_orchid_hybrid_stage2.pth")
+
+# Automatic downloading from Hugging Face if the file is missing
+if not os.path.exists(MODEL_PATH):
+    import urllib.request
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    
+    st.info("📥 Downloading model checkpoint from Hugging Face... Please wait. This will only happen once.")
+    progress_bar = st.progress(0.0)
+    status_text = st.empty()
+    
+    def download_progress(block_num, block_size, total_size):
+        read_so_far = block_num * block_size
+        if total_size > 0:
+            percent = min(read_so_far / total_size, 1.0)
+            progress_bar.progress(percent)
+            status_text.text(f"Downloaded {read_so_far / (1024*1024):.1f} MB of {total_size / (1024*1024):.1f} MB ({percent*100:.1f}%)")
+        else:
+            status_text.text(f"Downloaded {read_so_far / (1024*1024):.1f} MB")
+            
+    try:
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH, download_progress)
+        progress_bar.empty()
+        status_text.empty()
+        st.success("✅ Model checkpoint downloaded successfully!")
+    except Exception as e:
+        progress_bar.empty()
+        status_text.empty()
+        st.error(f"❌ Failed to download model checkpoint: {str(e)}")
+        st.stop()
 
 # Fallback checkpoint discovery
 if not os.path.exists(MODEL_PATH):
@@ -57,10 +87,13 @@ if not os.path.exists(MODEL_PATH):
         MODEL_PATH = pth_files[0]
 
 if not os.path.exists(MODEL_PATH):
-    raise FileNotFoundError(
-        f"No .pth checkpoint found in: {MODEL_DIR}\n"
-        "Place best_orchid_hybrid_stage2.pth inside the models folder."
+    st.error("### ⚠️ Model Checkpoint Not Found")
+    st.markdown(
+        """
+        The model checkpoint file was not found in the `models/` directory and download failed.
+        """
     )
+    st.stop()
 
 # ============================================================
 # MODEL ARCHITECTURE
