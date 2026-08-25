@@ -1562,8 +1562,90 @@ body,
 
 
 /* =========================================================
+   GRADIO IMAGE UPLOAD — TEXT VISIBILITY FIX
+========================================================= */
+
+/* Make the upload area text clearly visible */
+.image-frame,
+.image-frame * {
+    opacity: 1 !important;
+}
+
+.image-frame {
+    color: #475569 !important;
+}
+
+.image-frame .wrap,
+.image-frame .image-container,
+.image-frame .upload-container {
+    color: #475569 !important;
+}
+
+/* Gradio upload placeholder */
+.image-frame [data-testid="upload-text"],
+.image-frame .upload-text,
+.image-frame .upload-text *,
+.image-frame .or,
+.image-frame .or *,
+.image-frame .drop-text,
+.image-frame .drop-text *,
+.image-frame p,
+.image-frame span {
+    color: #64748b !important;
+    opacity: 1 !important;
+}
+
+/* Upload icon */
+.image-frame svg {
+    color: #64748b !important;
+    opacity: 1 !important;
+}
+
+/* Upload label/header */
+.image-frame label,
+.image-frame label span {
+    color: #334155 !important;
+    opacity: 1 !important;
+}
+
+/* =========================================================
+   PREDICTION CARD — TEXT VISIBILITY
+========================================================= */
+
+.prediction-card {
+    color: #f8fafc !important;
+}
+
+.prediction-card .prediction-label {
+    color: #cbd5e1 !important;
+    opacity: 1 !important;
+}
+
+.prediction-card .diagnosis-name {
+    color: #7dd3fc !important;
+    opacity: 1 !important;
+}
+
+.prediction-card .full-diagnosis {
+    color: #f1f5f9 !important;
+    opacity: 1 !important;
+}
+
+.prediction-card .confidence-label {
+    color: #cbd5e1 !important;
+    opacity: 1 !important;
+}
+
+.prediction-card .status-message {
+    color: #e2e8f0 !important;
+    opacity: 1 !important;
+}
+
+/* =========================================================
    ANALYZE BUTTON
 ========================================================= */
+
+
 
 #analyze_button {
 
