@@ -775,8 +775,11 @@ st.markdown(
         padding: 20px !important;
         transition: all 0.3s ease !important;
     }
-    [data-testid="stFileUploader"] > section:hover {
-        border-color: #3b82f6 !important;
+    [data-testid="stFileUploader"] > section:hover,
+    [data-testid="stFileUploader"] > section:focus,
+    [data-testid="stFileUploader"] > section:active,
+    [data-testid="stFileUploader"] > section:focus-within {
+        border-color: #cbd5e1 !important;
         background-color: #f8fafc !important;
     }
     [data-testid="stFileUploader"] button, 
@@ -799,6 +802,33 @@ st.markdown(
     }
     [data-testid="stFileUploader"] section div {
         color: #64748b !important;
+    }
+    
+    /* Style the uploaded file box to be white/transparent instead of black */
+    [data-testid="stUploadedFile"],
+    .stUploadedFile,
+    div[data-testid="stUploadedFile"] {
+        background-color: white !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 10px !important;
+        color: #1e293b !important;
+        padding: 8px 12px !important;
+    }
+    [data-testid="stUploadedFile"] span,
+    [data-testid="stUploadedFile"] div,
+    [data-testid="stUploadedFile"] p {
+        color: #1e293b !important;
+    }
+    [data-testid="stUploadedFile"] button {
+        background-color: transparent !important;
+        color: #64748b !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 6px !important;
+    }
+    [data-testid="stUploadedFile"] button:hover {
+        background-color: #f1f5f9 !important;
+        color: #ef4444 !important;
+        border-color: #fca5a5 !important;
     }
     
     /* Uploaded Image Custom Sizing */
