@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import timm
 import open_clip
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image
 from torchvision import transforms
 from pytorch_grad_cam import GradCAM
@@ -943,53 +944,51 @@ with col1:
         label_visibility="collapsed",
     )
 
-    # JS: Force-override the dark black uploaded-file chip with white styles
-    st.markdown(
+    # JS via components.v1.html — can access window.parent.document (same-origin)
+    components.html(
         """
         <script>
         (function() {
-            function fixUploadedFileChip() {
-                // Target every possible container Streamlit uses for the file chip
-                const selectors = [
-                    '[data-testid="stUploadedFile"]',
-                    '[class*="uploadedFileName"]',
-                    '[class*="UploadedFile"]',
-                    '[data-testid="stFileUploader"] section li',
-                    '[data-testid="stFileUploader"] section li > div',
-                    '[data-testid="stFileUploader"] ul li',
-                ];
-                selectors.forEach(function(sel) {
-                    document.querySelectorAll(sel).forEach(function(el) {
-                        el.style.setProperty('background-color', 'white', 'important');
+            function fixChip() {
+                try {
+                    var doc = window.parent.document;
+                    var targets = doc.querySelectorAll(
+                        '[data-testid="stFileUploader"] section li, ' +
+                        '[data-testid="stFileUploader"] section li > div, ' +
+                        '[data-testid="stFileUploader"] section ul li'
+                    );
+                    targets.forEach(function(el) {
                         el.style.setProperty('background', 'white', 'important');
+                        el.style.setProperty('background-color', 'white', 'important');
                         el.style.setProperty('color', '#1e293b', 'important');
-                        el.style.setProperty('border', '1px solid #cbd5e1', 'important');
+                        el.style.setProperty('border', '1px solid #e2e8f0', 'important');
                         el.style.setProperty('border-radius', '10px', 'important');
                     });
-                });
-                // Also fix all child elements that may have dark bg
-                document.querySelectorAll('[data-testid="stFileUploader"] section li *').forEach(function(el) {
-                    var bg = window.getComputedStyle(el).backgroundColor;
-                    // If background is dark (rgb values all < 80), override it
-                    var match = bg.match(/rgb\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)/);
-                    if (match) {
-                        var r = parseInt(match[1]), g = parseInt(match[2]), b = parseInt(match[3]);
-                        if (r < 80 && g < 80 && b < 80) {
-                            el.style.setProperty('background-color', 'transparent', 'important');
+                    // Nuke any dark-background children
+                    doc.querySelectorAll('[data-testid="stFileUploader"] section li *').forEach(function(el) {
+                        var bg = window.parent.getComputedStyle(el).backgroundColor;
+                        var m = bg.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+                        if (m && parseInt(m[1]) < 80 && parseInt(m[2]) < 80 && parseInt(m[3]) < 80) {
                             el.style.setProperty('background', 'transparent', 'important');
+                            el.style.setProperty('background-color', 'transparent', 'important');
                             el.style.setProperty('color', '#1e293b', 'important');
                         }
-                    }
-                });
+                    });
+                } catch(e) {}
             }
-            // Run immediately and watch for DOM changes
-            fixUploadedFileChip();
-            var observer = new MutationObserver(function() { fixUploadedFileChip(); });
-            observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
+            fixChip();
+            setTimeout(fixChip, 300);
+            setTimeout(fixChip, 800);
+            try {
+                new MutationObserver(fixChip).observe(
+                    window.parent.document.body,
+                    { childList: true, subtree: true, attributes: true }
+                );
+            } catch(e) {}
         })();
         </script>
         """,
-        unsafe_allow_html=True,
+        height=0,
     )
 
     input_image = None
