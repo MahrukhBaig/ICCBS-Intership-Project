@@ -5,8 +5,7 @@
 import os
 import re
 import glob
-import uuid
-import tempfile
+import traceback
 import numpy as np
 import torch
 import torch.nn as nn
@@ -59,21 +58,6 @@ IMG_SIZE = 224
 
 device = torch.device(
     "cuda" if torch.cuda.is_available() else "cpu"
-)
-
-# ------------------------------------------------------------
-# Directory for Grad-CAM output PNGs. See _save_temp_png below
-# for why we write real files instead of passing PIL objects
-# straight through Gradio.
-# ------------------------------------------------------------
-TEMP_IMG_DIR = os.path.join(
-    tempfile.gettempdir(),
-    "oral_ai_outputs"
-)
-
-os.makedirs(
-    TEMP_IMG_DIR,
-    exist_ok=True
 )
 
 MODEL_PATH = os.path.join(
@@ -858,34 +842,22 @@ target_layer = (
 
 
 # ============================================================
-# SAFE PNG WRITER FOR OUTPUT IMAGES
-# ============================================================
-
-def _save_temp_png(
-    pil_img,
-    prefix
-):
-
-    filename = (
-        f"{prefix}_{uuid.uuid4().hex}.png"
-    )
-
-    filepath = os.path.join(
-        TEMP_IMG_DIR,
-        filename
-    )
-
-    pil_img.save(
-        filepath,
-        format="PNG"
-    )
-
-    return filepath
-
-
-# ============================================================
 # GENERATE GRAD-CAM
 # ============================================================
+# NOTE: This returns plain in-memory numpy arrays (uint8 RGB
+# images) rather than filepaths. An earlier version of this
+# function wrote each image to disk as a PNG and returned the
+# filepath instead, on the assumption that passing PIL/numpy
+# objects straight through Gradio's output pipeline was
+# unreliable. In practice the opposite was true here: Gradio
+# would not reliably serve images back from that on-disk path
+# (regardless of which directory it lived in), producing blank
+# white boxes with no error anywhere in the Python traceback,
+# since the failure happened purely on Gradio's internal file-
+# serving layer, after generate_gradcam() had already returned
+# successfully. Returning raw arrays sidesteps that layer
+# entirely — gr.Image renders them directly from memory — and
+# is the version confirmed to work in this environment.
 
 def generate_gradcam(
     image,
@@ -971,63 +943,28 @@ def generate_gradcam(
 
 
     # ========================================================
-    # CONVERT TO PIL, THEN WRITE REAL PNG FILES
+    # RETURN RAW ARRAYS — NO DISK I/O
     # ========================================================
-    # Converting to PIL wasn't enough on its own — these three
-    # images kept rendering as blank/black boxes in the browser
-    # even though the underlying arrays were valid (confirmed:
-    # once the dark-theme CSS was fixed separately, the boxes
-    # turned white/empty instead of black — i.e. no image data
-    # was ever reaching the <img> tag, not a color problem).
-    #
-    # This is a known failure mode when passing PIL/numpy image
-    # objects straight through Gradio's in-memory output
-    # pipeline. Writing each image to a real PNG file on disk
-    # and returning the *filepath* instead sidesteps that
-    # pipeline entirely — the component just requests the file
-    # like a normal static asset — and is the standard, reliable
-    # fix for this exact symptom.
 
-    original_pil = Image.fromarray(
-        np.ascontiguousarray(
-            (rgb_image * 255).astype(np.uint8)
-        )
-    ).convert("RGB")
-
-    heatmap_pil = Image.fromarray(
-        np.ascontiguousarray(
-            heatmap.astype(np.uint8)
-        )
-    ).convert("RGB")
-
-    overlay_pil = Image.fromarray(
-        np.ascontiguousarray(
-            overlay.astype(np.uint8)
-        )
-    ).convert("RGB")
-
-    original_path = _save_temp_png(
-        original_pil,
-        "original"
+    original_array = np.ascontiguousarray(
+        (rgb_image * 255).astype(np.uint8)
     )
 
-    heatmap_path = _save_temp_png(
-        heatmap_pil,
-        "heatmap"
+    heatmap_array = np.ascontiguousarray(
+        heatmap.astype(np.uint8)
     )
 
-    overlay_path = _save_temp_png(
-        overlay_pil,
-        "overlay"
+    overlay_array = np.ascontiguousarray(
+        overlay.astype(np.uint8)
     )
 
     return (
 
-        original_path,
+        original_array,
 
-        heatmap_path,
+        heatmap_array,
 
-        overlay_path
+        overlay_array
     )
 
 
@@ -1035,7 +972,7 @@ def generate_gradcam(
 # PRODUCTION UI PREDICTION WRAPPER
 # ============================================================
 
-def ui_predict_production(
+def _ui_predict_production_inner(
     image
 ):
 
@@ -1314,23 +1251,73 @@ def ui_predict_production(
 
 
 # ============================================================
+# ERROR-SURFACING WRAPPER
+# ============================================================
+
+def ui_predict_production(
+    image
+):
+
+    try:
+
+        return _ui_predict_production_inner(
+            image
+        )
+
+    except Exception as exc:
+
+        traceback.print_exc()
+
+        error_details = (
+            traceback.format_exc()
+        )
+
+        error_html = f"""
+
+        <div class="prediction-card">
+
+            <div class="prediction-label">
+                ⚠️ ERROR DURING ANALYSIS
+            </div>
+
+            <div class="diagnosis-name"
+                 style="color:#fb7185; font-size:20px;">
+                {type(exc).__name__}
+            </div>
+
+            <div class="full-diagnosis"
+                 style="text-align:left;">
+                {str(exc)}
+            </div>
+
+            <div class="confidence-box"
+                 style="text-align:left;">
+                <pre style="
+                    white-space: pre-wrap;
+                    word-break: break-word;
+                    font-size: 11px;
+                    color: #fca5a5;
+                    margin: 0;
+                ">{error_details}</pre>
+            </div>
+
+        </div>
+
+        """
+
+        return (
+            None,
+            None,
+            None,
+            error_html,
+            {},
+            ""
+        )
+
+
+# ============================================================
 # FORCE LIGHT THEME
 # ============================================================
-# The old approach here redirected the page to add
-# ?__theme=light to the URL. That redirect doesn't fire
-# reliably in every context (iframed previews, some Spaces
-# embeds, browsers that block synchronous navigation on
-# load), and when it silently fails Gradio's dark-theme CSS
-# variables stay active — which is what was actually causing
-# the black Grad-CAM boxes AND the washed-out probability
-# text: both were resolving colors from those dark variables,
-# not from a "broken image".
-#
-# Fix: don't depend on a redirect at all. Add the 'dark'-
-# theme-busting class immediately (no navigation), and do the
-# real fix with plain CSS variable overrides below, which
-# apply regardless of whether the browser/OS reports light or
-# dark mode.
 
 FORCE_LIGHT_THEME_JS = """
 function forceLightTheme() {
@@ -1357,24 +1344,6 @@ CUSTOM_CSS = """
 
 /* =========================================================
    ROOT FIX — KILL DARK THEME AT THE SOURCE
-
-   This is the actual fix for both the black Grad-CAM/Original/
-   Overlay boxes and the washed-out "osmf" text in the
-   probability card. Both symptoms have the same root cause:
-   Gradio resolves component colors from a shared set of CSS
-   custom properties, and those properties still held their
-   dark-theme values (dark backgrounds, pale/low-contrast
-   text) because the old __theme=light redirect trick didn't
-   reliably neutralize them. The .empty-only overrides further
-   down only ever covered the "no image yet" placeholder state,
-   never the state after a real prediction loads — so a
-   genuinely-loaded Grad-CAM image was still sitting on a dark
-   background variable with no override reaching it.
-
-   Overriding the variables directly, on :root AND on .dark,
-   means every component — image containers, the Label bars,
-   anything we haven't individually targeted below — resolves
-   to light colors no matter what theme class Gradio applies.
 ========================================================= */
 
 :root,
@@ -1400,12 +1369,6 @@ CUSTOM_CSS = """
     --neutral-900: #172033 !important;
 }
 
-/* Gradio marks components "busy" while your click handler is
-   running (and briefly right after) by dimming them via
-   opacity — this is what produced the washed-out "osmf" text:
-   the Label had actually finished rendering, it was just still
-   wearing the dimmed/pending opacity. Same class can dim the
-   Grad-CAM images too. Force full opacity everywhere. */
 .gradio-container .generating,
 .gradio-container [class*="pending"] {
     opacity: 1 !important;
@@ -1777,7 +1740,6 @@ body,
    GRADIO IMAGE UPLOAD — TEXT VISIBILITY FIX
 ========================================================= */
 
-/* Make the upload area text clearly visible */
 .image-frame,
 .image-frame * {
     opacity: 1 !important;
@@ -1793,7 +1755,6 @@ body,
     color: #475569 !important;
 }
 
-/* Gradio upload placeholder */
 .image-frame [data-testid="upload-text"],
 .image-frame .upload-text,
 .image-frame .upload-text *,
@@ -1807,32 +1768,16 @@ body,
     opacity: 1 !important;
 }
 
-/* Upload icon */
 .image-frame svg {
     color: #64748b !important;
     opacity: 1 !important;
 }
 
-/* Upload label/header */
 .image-frame label,
 .image-frame label span {
     color: #334155 !important;
     opacity: 1 !important;
 }
-
-/* =========================================================
-   FORCE LIGHT BACKGROUNDS ON EMPTY IMAGE CONTAINERS
-   (fallback in case theme detection ever misfires — the
-   FORCE_LIGHT_THEME_JS above is the primary fix)
-
-   IMPORTANT: only target the true "no image yet" state
-   (Gradio's .empty class). A loaded image is painted as a
-   background-image on this same wrapper element, so a
-   broader selector here (e.g. .wrap, > div) would paint over
-   and hide the actual photo once one loads — that was the
-   cause of Grad-CAM outputs appearing blank after a real
-   prediction.
-========================================================= */
 
 .image-frame .empty {
     background: #ffffff !important;
@@ -1844,14 +1789,6 @@ body,
     fill: #94a3b8 !important;
 }
 
-/* .empty only ever matches the "no image yet" placeholder —
-   it's removed the moment a real image (Original/Grad-CAM/
-   Overlay) loads, which is exactly when the black boxes showed
-   up, because nothing was left to override the dark background
-   underneath. [data-testid="image"] is a stable hook Gradio
-   sets in both states, so this covers the loaded case too.
-   It only sets background-color, never background-image, so
-   it can't paint over an actual loaded photo. */
 .image-frame [data-testid="image"] {
     background-color: #ffffff !important;
 }
@@ -1862,16 +1799,7 @@ body,
 }
 
 /* =========================================================
-   COMPONENT LABEL BADGES (the small floating tag Gradio
-   draws on top of every component, e.g. "Upload
-   Histopathology Image", "Class Probability Distribution").
-
-   Gradio's Svelte build uses randomized/scoped class names,
-   so targeting classes directly (.block-label etc.) is
-   unreliable and can silently match nothing. The colors for
-   this chip actually come from Gradio's own CSS custom
-   properties, so overriding those variables is the robust
-   fix — it works regardless of the internal class names.
+   COMPONENT LABEL BADGES
 ========================================================= */
 
 .gradio-container {
@@ -1881,13 +1809,6 @@ body,
     --block-label-shadow: none !important;
     --block-label-margin: 0 !important;
 
-    /* Gradio's Default theme ships an orange primary button
-       color via these variables. #analyze_button button below
-       already overrides the rendered button directly, but some
-       Gradio builds resolve variant="primary" styling straight
-       from these variables before the element-level rule is
-       applied, so the button can still flash/render orange.
-       Overriding the source variables closes that gap. */
     --button-primary-background-fill: linear-gradient(135deg, #2563eb, #38bdf8) !important;
     --button-primary-background-fill-hover: linear-gradient(135deg, #1d4ed8, #0ea5e9) !important;
     --button-primary-border-color: transparent !important;
@@ -1895,8 +1816,6 @@ body,
     --button-primary-text-color: #ffffff !important;
 }
 
-/* Belt-and-suspenders: also catch it via the stable
-   data-testid attribute Gradio sets on this element. */
 [data-testid="block-label"],
 .image-frame [data-testid="block-label"],
 .probability-card [data-testid="block-label"] {
@@ -1914,22 +1833,13 @@ body,
     opacity: 1 !important;
 }
 
-/* Three prior attempts to recolor this chip's icon
-   (fill, mask background-color, sizing) haven't matched
-   whatever Gradio actually renders it as. Removing it
-   outright guarantees no more black square, and the chip
-   reads fine as text-only. */
 [data-testid="block-label"] svg,
 [data-testid="block-label"] img {
     display: none !important;
 }
 
 /* =========================================================
-   PROBABILITY CARD (gr.Label) — DARK BACKGROUND FIX
-   gr.Label is a different component type from gr.Image, so
-   the .image-frame overrides above don't reach it. It needs
-   its own background + text-color overrides, including its
-   empty-state icon.
+   PROBABILITY CARD (gr.Label)
 ========================================================= */
 
 .probability-card,
@@ -1960,14 +1870,6 @@ body,
     color: #1e293b !important;
 }
 
-/* Gradio's Label component renders its top predicted class
-   (e.g. "osmf") using a text color meant to sit on its own
-   colored/dark background. We forced this card's background
-   to white for readability, which left that specific text
-   white-on-white. The selectors above (label/span/p/etc.)
-   didn't happen to match whatever element renders it, so
-   force it directly by targeting the known Gradio class and,
-   as a guaranteed catch-all, every descendant of this card. */
 .probability-card .output-class,
 .probability-card [class*="output-class"] {
     color: #1e293b !important;
@@ -1978,8 +1880,6 @@ body,
     color: #1e293b !important;
 }
 
-/* Confidence bars inside gr.Label keep their accent color,
-   but the track/background behind them should stay light */
 .probability-card .bar,
 .probability-card .bar-container,
 .probability-card .confidence {
@@ -2022,8 +1922,6 @@ body,
 /* =========================================================
    ANALYZE BUTTON
 ========================================================= */
-
-
 
 #analyze_button {
 
@@ -2387,10 +2285,6 @@ body,
     opacity: 1 !important;
 }
 
-/* Force full visibility on all disclaimer content — Gradio
-   applies a dimmed "pending/loading" opacity to HTML
-   components during queue updates, which can leave this
-   text looking washed out even after it has fully loaded. */
 .disclaimer,
 .disclaimer *,
 .disclaimer b,
@@ -2414,7 +2308,6 @@ body,
     color: #1e293b !important;
 }
 
-/* Force readable text inside Gradio Markdown */
 .model-info .prose,
 .model-info .markdown,
 .model-info .prose *,
@@ -2432,14 +2325,12 @@ body,
     color: #1e293b !important;
 }
 
-/* Main heading */
 .model-info h2 {
     color: #172033 !important;
     font-size: 22px !important;
     font-weight: 700 !important;
 }
 
-/* Subheadings */
 .model-info h3 {
     color: #1e293b !important;
     font-size: 17px !important;
@@ -2447,7 +2338,6 @@ body,
     margin-top: 28px !important;
 }
 
-/* Table */
 .model-info table {
     width: 100% !important;
     border-collapse: collapse !important;
@@ -2470,13 +2360,11 @@ body,
     padding: 10px !important;
 }
 
-/* Dataset class list */
 .model-info li {
     color: #475569 !important;
     margin-bottom: 8px !important;
 }
 
-/* Normal paragraphs */
 .model-info p {
     color: #475569 !important;
     line-height: 1.6 !important;
@@ -2876,14 +2764,10 @@ with gr.Blocks(
 
             original_output = gr.Image(
 
-                type="filepath",
-
                 label=
                     "Original Image",
 
                 height=320,
-
-                interactive=False,
 
                 elem_classes=[
                     "image-frame"
@@ -2893,14 +2777,10 @@ with gr.Blocks(
 
             heatmap_output = gr.Image(
 
-                type="filepath",
-
                 label=
                     "Grad-CAM Attention",
 
                 height=320,
-
-                interactive=False,
 
                 elem_classes=[
                     "image-frame"
@@ -2910,14 +2790,10 @@ with gr.Blocks(
 
             overlay_output = gr.Image(
 
-                type="filepath",
-
                 label=
                     "Grad-CAM Overlay",
 
                 height=320,
-
-                interactive=False,
 
                 elem_classes=[
                     "image-frame"
