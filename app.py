@@ -975,7 +975,7 @@ with col2:
         )
 
 # ============================================================
-# EXPLAINABLE AI ANALYSIS (Visual Explanations)
+# EXPLAINABLE AI ANALYSIS Visual Explanations
 # ============================================================
 
 st.markdown(
@@ -1018,7 +1018,7 @@ else:
 st.markdown(
     """
     <div class="disclaimer">
-        ⚠️ <b>Research and Educational Use Only</b><br>
+         <b>Research and Educational Use Only</b><br>
         This AI system is intended for research and educational purposes. It is not designed to replace professional pathological diagnosis or clinical decision-making.
     </div>
     """,
