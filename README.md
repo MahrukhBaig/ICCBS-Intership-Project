@@ -235,7 +235,7 @@ The trained model was integrated into an interactive application that allows use
 
 ### 🚀 Live Demo
 
-**[Launch ORAL AI →](https://ce355c1bc8e64289e6.gradio.live/)**
+**[Launch ORAL AI →]( https://ddcb8e1e5544ca39fc.gradio.live)**
 
 ---
 
