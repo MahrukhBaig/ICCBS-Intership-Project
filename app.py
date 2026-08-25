@@ -1858,7 +1858,7 @@ body,
         center;
 
     margin-top:
-        90px;
+        60px !important;
 
     margin-bottom:
         35px;
@@ -1931,43 +1931,82 @@ body,
 ========================================================= */
 
 .model-info {
-
-    margin-top:
-        50px;
-
-    padding:
-        35px;
-
-    border-radius:
-        20px;
-
-    background:
-        white;
-
-    border:
-        1px solid
-        #dbe3ef;
-
-    box-shadow:
-        0 8px 25px
-        rgba(15,23,42,0.05);
+    margin-top: 50px !important;
+    padding: 35px !important;
+    border-radius: 20px !important;
+    background: #ffffff !important;
+    border: 1px solid #dbe3ef !important;
+    box-shadow: 0 8px 25px rgba(15,23,42,0.05);
+    color: #1e293b !important;
 }
 
-
-.model-info table {
-
-    width:
-        100%;
-}
-
-
+/* Force readable text inside Gradio Markdown */
+.model-info .prose,
+.model-info .markdown,
+.model-info .prose *,
+.model-info .markdown *,
+.model-info h1,
+.model-info h2,
+.model-info h3,
+.model-info h4,
+.model-info p,
+.model-info li,
 .model-info th,
-.model-info td {
-
-    border-color:
-        #dbe3ef !important;
+.model-info td,
+.model-info strong,
+.model-info b {
+    color: #1e293b !important;
 }
 
+/* Main heading */
+.model-info h2 {
+    color: #172033 !important;
+    font-size: 22px !important;
+    font-weight: 700 !important;
+}
+
+/* Subheadings */
+.model-info h3 {
+    color: #1e293b !important;
+    font-size: 17px !important;
+    font-weight: 700 !important;
+    margin-top: 28px !important;
+}
+
+/* Table */
+.model-info table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    color: #1e293b !important;
+}
+
+.model-info th {
+    color: #172033 !important;
+    background: #f8fafc !important;
+    font-weight: 700 !important;
+    text-align: left !important;
+    border: 1px solid #dbe3ef !important;
+    padding: 10px !important;
+}
+
+.model-info td {
+    color: #475569 !important;
+    background: #ffffff !important;
+    border: 1px solid #dbe3ef !important;
+    padding: 10px !important;
+}
+
+/* Dataset class list */
+.model-info li {
+    color: #475569 !important;
+    margin-bottom: 8px !important;
+}
+
+/* Normal paragraphs */
+.model-info p {
+    color: #475569 !important;
+    line-height: 1.6 !important;
+}
 
 /* =========================================================
    RESPONSIVE DESIGN
