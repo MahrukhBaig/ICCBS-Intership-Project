@@ -1673,13 +1673,17 @@ body,
    FORCE LIGHT BACKGROUNDS ON EMPTY IMAGE CONTAINERS
    (fallback in case theme detection ever misfires — the
    FORCE_LIGHT_THEME_JS above is the primary fix)
+
+   IMPORTANT: only target the true "no image yet" state
+   (Gradio's .empty class). A loaded image is painted as a
+   background-image on this same wrapper element, so a
+   broader selector here (e.g. .wrap, > div) would paint over
+   and hide the actual photo once one loads — that was the
+   cause of Grad-CAM outputs appearing blank after a real
+   prediction.
 ========================================================= */
 
-.image-frame,
-.image-frame > div,
-.image-frame [data-testid="image"],
-.image-frame .empty,
-.image-frame .wrap {
+.image-frame .empty {
     background: #ffffff !important;
 }
 
@@ -1742,10 +1746,14 @@ body,
     opacity: 1 !important;
 }
 
-[data-testid="block-label"] svg {
-    background: transparent !important;
-    width: 14px !important;
-    height: 14px !important;
+/* Three prior attempts to recolor this chip's icon
+   (fill, mask background-color, sizing) haven't matched
+   whatever Gradio actually renders it as. Removing it
+   outright guarantees no more black square, and the chip
+   reads fine as text-only. */
+[data-testid="block-label"] svg,
+[data-testid="block-label"] img {
+    display: none !important;
 }
 
 /* =========================================================
@@ -2189,6 +2197,20 @@ body,
 
     line-height:
         1.6;
+
+    opacity: 1 !important;
+}
+
+/* Force full visibility on all disclaimer content — Gradio
+   applies a dimmed "pending/loading" opacity to HTML
+   components during queue updates, which can leave this
+   text looking washed out even after it has fully loaded. */
+.disclaimer,
+.disclaimer *,
+.disclaimer b,
+.disclaimer strong {
+    opacity: 1 !important;
+    color: #92400e !important;
 }
 
 
@@ -2544,7 +2566,7 @@ with gr.Blocks(
 
                 predict_button = gr.Button(
 
-                    " Analyze Image with ORAL AI",
+                    "✨ Analyze Image with ORAL AI",
 
                     variant="primary",
 
