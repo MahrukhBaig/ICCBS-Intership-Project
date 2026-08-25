@@ -1,9 +1,8 @@
 # ============================================================
-# ORAL AI — PRODUCTION GRADIO UI
+# ORAL AI — PRODUCTION STREAMLIT UI
 # ============================================================
 
 import os
-import re
 import glob
 import traceback
 import numpy as np
@@ -12,14 +11,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 import timm
 import open_clip
-import gradio as gr
-
+import streamlit as st
 from PIL import Image
 from torchvision import transforms
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
+# Set page config for a premium wide layout
+st.set_page_config(
+    page_title="ORAL AI — Intelligent Oral Histopathology Analysis",
+    page_icon="🧬",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 # ============================================================
 # CONFIGURATION
@@ -28,425 +33,175 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, "models")
 
-CLASS_NAMES = [
-    "mdoscc",
-    "normal",
-    "osmf",
-    "pdoscc",
-    "wdoscc"
-]
+CLASS_NAMES = ["mdoscc", "normal", "osmf", "pdoscc", "wdoscc"]
 
 CLASS_DESCRIPTIONS = {
-    "mdoscc":
-        "Moderately Differentiated Oral Squamous Cell Carcinoma",
-
-    "normal":
-        "Normal Oral Tissue",
-
-    "osmf":
-        "Oral Submucous Fibrosis",
-
-    "pdoscc":
-        "Poorly Differentiated Oral Squamous Cell Carcinoma",
-
-    "wdoscc":
-        "Well Differentiated Oral Squamous Cell Carcinoma",
+    "mdoscc": "Moderately Differentiated Oral Squamous Cell Carcinoma",
+    "normal": "Normal Oral Tissue",
+    "osmf": "Oral Submucous Fibrosis",
+    "pdoscc": "Poorly Differentiated Oral Squamous Cell Carcinoma",
+    "wdoscc": "Well Differentiated Oral Squamous Cell Carcinoma",
 }
 
 NUM_CLASSES = len(CLASS_NAMES)
 IMG_SIZE = 224
 
-device = torch.device(
-    "cuda" if torch.cuda.is_available() else "cpu"
-)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-MODEL_PATH = os.path.join(
-    MODEL_DIR,
-    "best_orchid_hybrid_stage2.pth"
-)
+MODEL_PATH = os.path.join(MODEL_DIR, "best_orchid_hybrid_stage2.pth")
 
 # Fallback checkpoint discovery
 if not os.path.exists(MODEL_PATH):
-
-    pth_files = sorted(
-        glob.glob(
-            os.path.join(
-                MODEL_DIR,
-                "*.pth"
-            )
-        )
-    )
-
+    pth_files = sorted(glob.glob(os.path.join(MODEL_DIR, "*.pth")))
     if len(pth_files) == 1:
         MODEL_PATH = pth_files[0]
 
-
 if not os.path.exists(MODEL_PATH):
-
     raise FileNotFoundError(
         f"No .pth checkpoint found in: {MODEL_DIR}\n"
         "Place best_orchid_hybrid_stage2.pth inside the models folder."
     )
-
 
 # ============================================================
 # MODEL ARCHITECTURE
 # ============================================================
 
 class SwinMultiStageEncoder(nn.Module):
-
     def __init__(self):
-
         super().__init__()
-
         swin = timm.create_model(
             "swin_tiny_patch4_window7_224",
             pretrained=False,
             num_classes=0
         )
-
         self.patch_embed = swin.patch_embed
         self.layers = swin.layers
         self.norm = swin.norm
 
-
     def forward(self, x):
-
         x = self.patch_embed(x)
-
         x = self.layers[0](x)
         s1 = x
-
         x = self.layers[1](x)
         s2 = x
-
         x = self.layers[2](x)
         s3 = x
-
         x = self.layers[3](x)
         s4 = x
-
         return s1, s2, s3, s4
 
 
 class CrossAttentionFusion(nn.Module):
-
-    def __init__(
-        self,
-        visual_dim,
-        text_dim=512
-    ):
-
+    def __init__(self, visual_dim, text_dim=512):
         super().__init__()
-
-        self.visual_projection = nn.Linear(
-            visual_dim,
-            text_dim
-        )
-
+        self.visual_projection = nn.Linear(visual_dim, text_dim)
         self.cross_attention = nn.MultiheadAttention(
             embed_dim=512,
             num_heads=8,
             batch_first=True
         )
-
         self.norm1 = nn.LayerNorm(512)
-
         self.ffn = nn.Sequential(
             nn.Linear(512, 1024),
             nn.GELU(),
             nn.Linear(1024, 512)
         )
-
         self.norm2 = nn.LayerNorm(512)
 
-
-    def forward(
-        self,
-        visual_features,
-        text_embeddings
-    ):
-
+    def forward(self, visual_features, text_embeddings):
         if visual_features.dim() == 4:
-
             B, H, W, C = visual_features.shape
-
-            visual_features = visual_features.reshape(
-                B,
-                H * W,
-                C
-            )
-
-        visual_features = self.visual_projection(
-            visual_features
-        )
-
+            visual_features = visual_features.reshape(B, H * W, C)
+        visual_features = self.visual_projection(visual_features)
         B = visual_features.shape[0]
-
-        text_features = (
-            text_embeddings
-            .unsqueeze(0)
-            .expand(B, -1, -1)
-        )
-
+        text_features = text_embeddings.unsqueeze(0).expand(B, -1, -1)
         attention_output, _ = self.cross_attention(
             query=visual_features,
             key=text_features,
             value=text_features
         )
-
-        x = self.norm1(
-            visual_features +
-            attention_output
-        )
-
-        x = self.norm2(
-            x +
-            self.ffn(x)
-        )
-
+        x = self.norm1(visual_features + attention_output)
+        x = self.norm2(x + self.ffn(x))
         return x
 
 
 class MultiScaleSemanticFusion(nn.Module):
-
     def __init__(self):
-
         super().__init__()
+        self.stage1 = CrossAttentionFusion(visual_dim=96)
+        self.stage2 = CrossAttentionFusion(visual_dim=192)
+        self.stage3 = CrossAttentionFusion(visual_dim=384)
+        self.stage4 = CrossAttentionFusion(visual_dim=768)
 
-        self.stage1 = CrossAttentionFusion(
-            visual_dim=96
-        )
-
-        self.stage2 = CrossAttentionFusion(
-            visual_dim=192
-        )
-
-        self.stage3 = CrossAttentionFusion(
-            visual_dim=384
-        )
-
-        self.stage4 = CrossAttentionFusion(
-            visual_dim=768
-        )
-
-
-    def forward(
-        self,
-        s1,
-        s2,
-        s3,
-        s4,
-        text_embeddings
-    ):
-
-        f1 = self.stage1(
-            s1,
-            text_embeddings
-        )
-
-        f2 = self.stage2(
-            s2,
-            text_embeddings
-        )
-
-        f3 = self.stage3(
-            s3,
-            text_embeddings
-        )
-
-        f4 = self.stage4(
-            s4,
-            text_embeddings
-        )
-
+    def forward(self, s1, s2, s3, s4, text_embeddings):
+        f1 = self.stage1(s1, text_embeddings)
+        f2 = self.stage2(s2, text_embeddings)
+        f3 = self.stage3(s3, text_embeddings)
+        f4 = self.stage4(s4, text_embeddings)
         return f1, f2, f3, f4
 
 
 class ResidualConvBlock(nn.Module):
-
-    def __init__(
-        self,
-        channels=512
-    ):
-
+    def __init__(self, channels=512):
         super().__init__()
-
         self.block = nn.Sequential(
-
-            nn.Conv2d(
-                channels,
-                channels,
-                kernel_size=3,
-                padding=1,
-                bias=False
-            ),
-
-            nn.BatchNorm2d(
-                channels
-            ),
-
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
             nn.GELU(),
-
-            nn.Conv2d(
-                channels,
-                channels,
-                kernel_size=3,
-                padding=1,
-                bias=False
-            ),
-
-            nn.BatchNorm2d(
-                channels
-            )
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(channels)
         )
-
         self.activation = nn.GELU()
 
-
     def forward(self, x):
-
         residual = x
-
         x = self.block(x)
-
         x = x + residual
-
         return self.activation(x)
 
 
 class HybridDecoder(nn.Module):
-
     def __init__(self):
-
         super().__init__()
-
-        self.decoder3 = ResidualConvBlock(
-            channels=512
-        )
-
-        self.decoder2 = ResidualConvBlock(
-            channels=512
-        )
-
-        self.decoder1 = ResidualConvBlock(
-            channels=512
-        )
-
+        self.decoder3 = ResidualConvBlock(channels=512)
+        self.decoder2 = ResidualConvBlock(channels=512)
+        self.decoder1 = ResidualConvBlock(channels=512)
 
     def forward(self, fused_features):
-
-        x = self.decoder3(
-            fused_features
-        )
-
+        x = self.decoder3(fused_features)
         x = self.decoder2(x)
-
         x = self.decoder1(x)
-
         return x
 
 
 class SwinCLIPHybrid(nn.Module):
-
-    def __init__(
-        self,
-        text_embeddings,
-        num_classes=5
-    ):
-
+    def __init__(self, text_embeddings, num_classes=5):
         super().__init__()
-
         self.encoder = SwinMultiStageEncoder()
-
-        self.text_embeddings = nn.Parameter(
-            text_embeddings.clone(),
-            requires_grad=False
-        )
-
-        self.semantic_fusion = (
-            MultiScaleSemanticFusion()
-        )
-
+        self.text_embeddings = nn.Parameter(text_embeddings.clone(), requires_grad=False)
+        self.semantic_fusion = MultiScaleSemanticFusion()
         self.decoder = HybridDecoder()
-
         self.classifier = nn.Sequential(
-
-            nn.Linear(
-                512,
-                256
-            ),
-
+            nn.Linear(512, 256),
             nn.GELU(),
-
-            nn.Dropout(
-                0.2
-            ),
-
-            nn.Linear(
-                256,
-                num_classes
-            )
+            nn.Dropout(0.2),
+            nn.Linear(256, num_classes)
         )
-
 
     def forward(self, x):
-
-        s1, s2, s3, s4 = (
-            self.encoder(x)
-        )
-
-        _, _, _, f4 = (
-            self.semantic_fusion(
-                s1,
-                s2,
-                s3,
-                s4,
-                self.text_embeddings
-            )
-        )
-
+        s1, s2, s3, s4 = self.encoder(x)
+        _, _, _, f4 = self.semantic_fusion(s1, s2, s3, s4, self.text_embeddings)
         x = f4
-
         B, N, C = x.shape
-
-        H = int(
-            N ** 0.5
-        )
-
+        H = int(N ** 0.5)
         W = H
-
-        x = x.transpose(
-            1,
-            2
-        )
-
-        x = x.reshape(
-            B,
-            C,
-            H,
-            W
-        )
-
+        x = x.transpose(1, 2)
+        x = x.reshape(B, C, H, W)
         x = self.decoder(x)
-
-        features = F.adaptive_avg_pool2d(
-            x,
-            1
-        )
-
-        features = features.flatten(
-            1
-        )
-
-        logits = self.classifier(
-            features
-        )
-
-        return {
-            "logits": logits,
-            "features": features
-        }
+        features = F.adaptive_avg_pool2d(x, 1)
+        features = features.flatten(1)
+        logits = self.classifier(features)
+        return {"logits": logits, "features": features}
 
 
 # ============================================================
@@ -454,2441 +209,901 @@ class SwinCLIPHybrid(nn.Module):
 # ============================================================
 
 CLIP_PROMPTS = {
-
     "mdoscc": [
-
         "a histopathological image of moderately differentiated oral squamous cell carcinoma",
-
         "a microscopic image of moderately differentiated oral squamous cell carcinoma",
-
         "a histology slide showing moderately differentiated OSCC",
-
         "moderately differentiated oral squamous cell carcinoma under a microscope",
-
         "a pathology image of moderately differentiated oral cancer",
-
         "oral squamous cell carcinoma with moderate differentiation",
     ],
-
-
     "normal": [
-
         "a histopathological image of normal oral tissue",
-
         "a microscopic image of normal oral mucosa",
-
         "a histology image showing healthy oral tissue",
-
         "a pathology slide of normal oral mucosa",
-
         "a microscopic view of healthy oral epithelium",
-
         "normal oral tissue under a microscope",
     ],
-
-
     "osmf": [
-
         "a histopathological image of oral submucous fibrosis",
-
         "a microscopic image showing oral submucous fibrosis",
-
         "a histology slide of oral submucous fibrosis",
-
         "oral mucosa affected by oral submucous fibrosis",
-
         "a pathology image showing fibrosis of the oral mucosa",
-
         "a microscopic view of fibrotic oral tissue",
     ],
-
-
     "pdoscc": [
-
         "a histopathological image of poorly differentiated oral squamous cell carcinoma",
-
         "a microscopic image of poorly differentiated oral squamous cell carcinoma",
-
         "a histology slide showing poorly differentiated OSCC",
-
         "poorly differentiated oral squamous cell carcinoma under a microscope",
-
         "a pathology image of poorly differentiated oral cancer",
-
         "oral squamous cell carcinoma with poor differentiation",
     ],
-
-
     "wdoscc": [
-
         "a histopathological image of well differentiated oral squamous cell carcinoma",
-
         "a microscopic image of well differentiated oral squamous cell carcinoma",
-
         "a histology slide showing well differentiated OSCC",
-
         "a pathology image of well differentiated oral cancer",
-
         "a microscopic view of well differentiated oral tissue",
-
         "oral squamous cell carcinoma with high differentiation",
     ]
 }
 
 
 # ============================================================
-# LOAD CLIP
+# LOAD MODEL & CLIP EMBEDDINGS (Cached for Performance)
 # ============================================================
 
-print(
-    f"Running on: {device}"
-)
-
-print(
-    "Loading CLIP semantic encoder..."
-)
-
-clip_model, _, _ = (
-    open_clip.create_model_and_transforms(
+@st.cache_resource
+def load_models_and_embeddings():
+    print(f"[OK] Loading models on: {device}")
+    
+    # Load CLIP semantic encoder
+    clip_model, _, _ = open_clip.create_model_and_transforms(
         model_name="ViT-B-16",
         pretrained="laion2b_s34b_b88k",
         device=device
     )
-)
+    clip_tokenizer = open_clip.get_tokenizer("ViT-B-16")
+    clip_model.eval()
+    for param in clip_model.parameters():
+        param.requires_grad = False
 
-clip_tokenizer = (
-    open_clip.get_tokenizer(
-        "ViT-B-16"
-    )
-)
+    # Extract text embeddings
+    text_embeddings_list = []
+    with torch.no_grad():
+        for class_name in CLASS_NAMES:
+            prompts = CLIP_PROMPTS[class_name]
+            tokens = clip_tokenizer(prompts).to(device)
+            embeddings = clip_model.encode_text(tokens)
+            embeddings = F.normalize(embeddings, dim=-1)
+            class_embedding = embeddings.mean(dim=0)
+            class_embedding = F.normalize(class_embedding, dim=0)
+            text_embeddings_list.append(class_embedding)
 
-clip_model.eval()
+    text_embeddings_tensor = torch.stack(text_embeddings_list)
 
-for param in clip_model.parameters():
+    # Load hybrid classification model
+    hybrid_model = SwinCLIPHybrid(
+        text_embeddings=text_embeddings_tensor,
+        num_classes=NUM_CLASSES
+    ).to(device)
 
-    param.requires_grad = False
+    checkpoint = torch.load(MODEL_PATH, map_location=device, weights_only=False)
+    state_dict = checkpoint.get("model_state_dict", checkpoint)
 
+    fixed_state_dict = {}
+    for key, value in state_dict.items():
+        if key.startswith("encoder.swin."):
+            key = key.replace("encoder.swin.", "encoder.", 1)
+        fixed_state_dict[key] = value
 
-text_embeddings_list = []
+    hybrid_model.load_state_dict(fixed_state_dict, strict=True)
+    hybrid_model.eval()
 
+    # Wrap model for Grad-CAM
+    class HybridCAMWrapper(nn.Module):
+        def __init__(self, model):
+            super().__init__()
+            self.model = model
 
-with torch.no_grad():
+        def forward(self, x):
+            return self.model(x)["logits"]
 
-    for class_name in CLASS_NAMES:
+    cam_model = HybridCAMWrapper(hybrid_model).to(device)
+    cam_model.eval()
+    
+    target_layer = hybrid_model.decoder.decoder1.block[3]
 
-        prompts = CLIP_PROMPTS[
-            class_name
-        ]
-
-        tokens = (
-            clip_tokenizer(
-                prompts
-            ).to(device)
-        )
-
-        embeddings = (
-            clip_model.encode_text(
-                tokens
-            )
-        )
-
-        embeddings = F.normalize(
-            embeddings,
-            dim=-1
-        )
-
-        class_embedding = (
-            embeddings.mean(
-                dim=0
-            )
-        )
-
-        class_embedding = F.normalize(
-            class_embedding,
-            dim=0
-        )
-
-        text_embeddings_list.append(
-            class_embedding
-        )
+    print(f"[OK] ORAL AI model loaded: {os.path.basename(MODEL_PATH)}")
+    return hybrid_model, cam_model, target_layer
 
 
-text_embeddings = torch.stack(
-    text_embeddings_list
-)
+hybrid_model, cam_model, target_layer = load_models_and_embeddings()
 
 
 # ============================================================
-# LOAD HYBRID MODEL
-# ============================================================
-
-hybrid_model = SwinCLIPHybrid(
-    text_embeddings=text_embeddings,
-    num_classes=NUM_CLASSES
-).to(device)
-
-
-checkpoint = torch.load(
-    MODEL_PATH,
-    map_location=device,
-    weights_only=False
-)
-
-state_dict = checkpoint.get(
-    "model_state_dict",
-    checkpoint
-)
-
-
-fixed_state_dict = {}
-
-
-for key, value in state_dict.items():
-
-    if key.startswith(
-        "encoder.swin."
-    ):
-
-        key = key.replace(
-            "encoder.swin.",
-            "encoder.",
-            1
-        )
-
-    fixed_state_dict[key] = value
-
-
-hybrid_model.load_state_dict(
-    fixed_state_dict,
-    strict=True
-)
-
-hybrid_model.eval()
-
-
-print(
-    f"✓ ORAL AI model loaded: "
-    f"{os.path.basename(MODEL_PATH)}"
-)
-
-
-# ============================================================
-# IMAGE PREPROCESSING
+# IMAGE PREPROCESSING & PREDICTION
 # ============================================================
 
 inference_transform = transforms.Compose([
-
-    transforms.Resize(
-        (IMG_SIZE, IMG_SIZE)
-    ),
-
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor(),
-
     transforms.Normalize(
-
-        mean=[
-            0.485,
-            0.456,
-            0.406
-        ],
-
-        std=[
-            0.229,
-            0.224,
-            0.225
-        ]
+        mean=[0.485, 0.456, 0.406],
+        std=[0.229, 0.224, 0.225]
     )
 ])
 
+CAM_MEAN = np.array([0.485, 0.456, 0.406])
+CAM_STD = np.array([0.229, 0.224, 0.225])
 
-CAM_MEAN = np.array([
-    0.485,
-    0.456,
-    0.406
-])
-
-CAM_STD = np.array([
-    0.229,
-    0.224,
-    0.225
-])
-
-
-# ============================================================
-# PREDICTION
-# ============================================================
 
 def predict_orchid(image):
-
-    image = image.convert(
-        "RGB"
-    )
-
-    input_tensor = (
-        inference_transform(
-            image
-        )
-        .unsqueeze(0)
-        .to(device)
-    )
-
+    image = image.convert("RGB")
+    input_tensor = inference_transform(image).unsqueeze(0).to(device)
+    
     hybrid_model.eval()
-
-
     with torch.no_grad():
+        output = hybrid_model(input_tensor)
+        logits = output["logits"]
+        probabilities_tensor = torch.softmax(logits, dim=1)[0]
 
-        output = hybrid_model(
-            input_tensor
-        )
-
-        logits = output[
-            "logits"
-        ]
-
-        probabilities_tensor = (
-            torch.softmax(
-                logits,
-                dim=1
-            )[0]
-        )
-
-
-    probabilities = (
-        probabilities_tensor
-        .detach()
-        .cpu()
-        .numpy()
-    )
-
-
-    prediction_index = int(
-        np.argmax(
-            probabilities
-        )
-    )
-
-    predicted_class = (
-        CLASS_NAMES[
-            prediction_index
-        ]
-    )
-
-    confidence = float(
-        probabilities[
-            prediction_index
-        ]
-    )
-
-
+    probabilities = probabilities_tensor.detach().cpu().numpy()
+    prediction_index = int(np.argmax(probabilities))
+    predicted_class = CLASS_NAMES[prediction_index]
+    confidence = float(probabilities[prediction_index])
+    
     class_probabilities = {
-
-        CLASS_NAMES[i]:
-        float(
-            probabilities[i]
-        )
-
-        for i in range(
-            NUM_CLASSES
-        )
+        CLASS_NAMES[i]: float(probabilities[i]) for i in range(NUM_CLASSES)
     }
 
+    return predicted_class, confidence, class_probabilities, prediction_index
 
-    return (
-        predicted_class,
-        confidence,
-        class_probabilities,
-        prediction_index
-    )
+
+def generate_gradcam(image, prediction_index):
+    image = image.convert("RGB")
+    input_tensor = inference_transform(image).unsqueeze(0).to(device)
+    targets = [ClassifierOutputTarget(prediction_index)]
+
+    with GradCAM(model=cam_model, target_layers=[target_layer]) as cam:
+        grayscale_cam = cam(input_tensor=input_tensor, targets=targets)[0]
+
+    rgb_image = input_tensor[0].detach().cpu().numpy()
+    rgb_image = np.transpose(rgb_image, (1, 2, 0))
+    rgb_image = rgb_image * CAM_STD + CAM_MEAN
+    rgb_image = np.clip(rgb_image, 0, 1)
+
+    heatmap = show_cam_on_image(np.zeros_like(rgb_image), grayscale_cam, use_rgb=True)
+    overlay = show_cam_on_image(rgb_image.astype(np.float32), grayscale_cam, use_rgb=True)
+
+    original_array = (rgb_image * 255).astype(np.uint8)
+    heatmap_array = heatmap.astype(np.uint8)
+    overlay_array = overlay.astype(np.uint8)
+
+    return original_array, heatmap_array, overlay_array
 
 
 # ============================================================
-# GRAD-CAM WRAPPER
+# PREMIUM CUSTOM CSS INJECTION
 # ============================================================
 
-class HybridCAMWrapper(
-    nn.Module
-):
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    
+    /* Global styles override */
+    html, body, [data-testid="stAppViewContainer"] {
+        font-family: 'Inter', sans-serif !important;
+        background-color: #f4f7fb !important;
+        color: #1e293b !important;
+    }
+    
+    /* Header/Navbar Area */
+    .navbar {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 18px 25px;
+        border-radius: 20px;
+        background: linear-gradient(135deg, #172033, #263b5c);
+        box-shadow: 0 12px 35px rgba(15,23,42,0.18);
+        margin-bottom: 30px;
+    }
+    .nav-left {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }
+    .logo-box {
+        width: 50px;
+        height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 15px;
+        font-size: 23px;
+        background: linear-gradient(135deg, #2563eb, #38bdf8);
+    }
+    .logo-title {
+        color: white;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        line-height: 1.2;
+    }
+    .logo-subtitle {
+        color: #a5b4c8;
+        font-size: 11px;
+    }
+    .system-status {
+        padding: 10px 16px;
+        border-radius: 14px;
+        color: #cbd5e1;
+        font-size: 11px;
+        background: rgba(255, 255, 255, 0.08);
+    }
+    @keyframes pulse {
+        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+        70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+    }
+    .status-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+        margin-right: 7px;
+        animation: pulse 2s infinite;
+    }
 
-    def __init__(
-        self,
-        model
-    ):
+    /* Hero section */
+    .hero-section {
+        text-align: center;
+        padding: 30px 10px 40px 10px;
+    }
+    .hero-title {
+        font-size: 40px;
+        font-weight: 800;
+        background: linear-gradient(135deg, #1e293b 30%, #2563eb 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    .hero-description {
+        max-width: 800px;
+        margin: 12px auto 0 auto;
+        line-height: 1.8;
+        font-size: 15px;
+        color: #64748b;
+    }
 
-        super().__init__()
+    /* Prediction Card */
+    .prediction-card {
+        min-height: 380px;
+        padding: 40px 35px;
+        border-radius: 22px;
+        text-align: center;
+        background: linear-gradient(145deg, #16213a, #202f50);
+        box-shadow: 0 15px 40px rgba(15,23,42,0.20);
+        color: #f8fafc !important;
+        margin-bottom: 20px;
+    }
+    .prediction-label {
+        color: #a5b4c8;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 2px;
+    }
+    .diagnosis-name {
+        margin-top: 20px;
+        font-size: 34px;
+        font-weight: 800;
+        letter-spacing: 2px;
+        color: #7dd3fc;
+    }
+    .full-diagnosis {
+        max-width: 520px;
+        margin: 12px auto 0;
+        font-size: 14px;
+        line-height: 1.6;
+        color: #e2e8f0;
+    }
+    .confidence-box {
+        margin-top: 25px;
+        padding: 18px;
+        border-radius: 14px;
+        background: rgba(15, 23, 42, 0.55);
+    }
+    .confidence-label {
+        color: #94a3b8;
+        font-size: 12px;
+    }
+    .confidence-value {
+        margin-top: 7px;
+        font-size: 38px;
+        font-weight: 800;
+    }
+    .high-confidence { color: #4ade80 !important; }
+    .moderate-confidence { color: #facc15 !important; }
+    .low-confidence { color: #fb7185 !important; }
 
-        self.model = model
+    .confidence-status {
+        margin-top: 18px;
+        padding: 16px;
+        border-radius: 14px;
+        text-align: left;
+        background: rgba(255, 255, 255, 0.05);
+    }
+    .status-title {
+        font-size: 13px;
+        font-weight: 700;
+    }
+    .status-message {
+        margin-top: 7px;
+        color: #cbd5e1;
+        font-size: 12px;
+        line-height: 1.6;
+    }
 
+    /* Info card list styled */
+    .probability-card {
+        background: white;
+        border: 1px solid #dbe3ef;
+        border-radius: 20px;
+        padding: 24px;
+        box-shadow: 0 8px 25px rgba(15,23,42,0.05);
+        margin-bottom: 20px;
+    }
+    .prob-header {
+        font-size: 16px;
+        font-weight: 700;
+        color: #1e293b;
+        margin-bottom: 18px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .prob-bar-container {
+        margin-bottom: 14px;
+    }
+    .prob-labels {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        font-weight: 600;
+        color: #475569;
+        margin-bottom: 5px;
+    }
+    .prob-bar-bg {
+        width: 100%;
+        height: 10px;
+        background: #eef2f7;
+        border-radius: 5px;
+        overflow: hidden;
+    }
+    .prob-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #2563eb, #38bdf8);
+        border-radius: 5px;
+    }
 
-    def forward(self, x):
+    /* Disclaimer box styling */
+    .disclaimer {
+        padding: 20px 24px;
+        border-radius: 15px;
+        background: #fffaf0;
+        border-left: 5px solid #f59e0b;
+        color: #92400e;
+        line-height: 1.6;
+        font-size: 13px;
+        margin-top: 30px;
+    }
 
-        return self.model(
-            x
-        )["logits"]
+    /* XAI Section style */
+    .xai-section-title {
+        text-align: center;
+        margin-top: 50px;
+        margin-bottom: 30px;
+    }
+    .xai-main-title {
+        font-size: 26px;
+        font-weight: 800;
+        color: #1e293b;
+    }
+    .xai-desc {
+        color: #64748b;
+        font-size: 14px;
+        margin-top: 8px;
+    }
 
+    /* XAI Display Layout */
+    .xai-card-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: #1e293b;
+        background: #eef4ff;
+        border: 1px solid #dbe3ef;
+        border-bottom: none;
+        padding: 10px;
+        text-align: center;
+        border-top-left-radius: 15px;
+        border-top-right-radius: 15px;
+    }
+    .xai-image-box {
+        border: 1px solid #dbe3ef;
+        border-radius: 0 0 15px 15px;
+        background: white;
+        padding: 10px;
+        box-shadow: 0 6px 18px rgba(15,23,42,0.04);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+    .xai-placeholder-box {
+        height: 320px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: #f8fafc;
+        color: #94a3b8;
+        font-size: 14px;
+        font-weight: 500;
+        border: 1px dashed #cbd5e1;
+        border-radius: 15px;
+        text-align: center;
+    }
 
-cam_model = HybridCAMWrapper(
-    hybrid_model
-).to(device)
+    /* Section header layout */
+    .sec-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 18px;
+    }
+    .sec-icon {
+        width: 44px;
+        height: 44px;
+        background: #eef4ff;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+    }
+    .sec-title-text {
+        font-size: 18px;
+        font-weight: 700;
+        color: #1e293b;
+    }
+    .sec-subtitle-text {
+        font-size: 11px;
+        color: #64748b;
+    }
 
-cam_model.eval()
-
-
-target_layer = (
-    hybrid_model
-    .decoder
-    .decoder1
-    .block[3]
+    /* Model Information Block */
+    .model-info-card {
+        background: white;
+        border: 1px solid #dbe3ef;
+        border-radius: 20px;
+        padding: 30px;
+        box-shadow: 0 8px 25px rgba(15,23,42,0.05);
+        margin-top: 55px;
+        margin-bottom: 40px;
+    }
+    .info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 20px;
+        margin-top: 20px;
+    }
+    .info-item {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 16px;
+    }
+    .info-label {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #64748b;
+        letter-spacing: 0.5px;
+    }
+    .info-value {
+        font-size: 14px;
+        font-weight: 600;
+        color: #1e293b;
+        margin-top: 4px;
+    }
+    /* Primary button custom styles - Softer Blue */
+    div.stButton > button {
+        background: linear-gradient(135deg, #3b82f6, #60a5fa) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px !important;
+        font-weight: 700 !important;
+        box-shadow: 0 4px 15px rgba(59, 130, 246, 0.15) !important;
+        transition: all 0.2s ease !important;
+    }
+    div.stButton > button:hover {
+        background: linear-gradient(135deg, #2563eb, #3b82f6) !important;
+        box-shadow: 0 6px 20px rgba(37, 99, 235, 0.25) !important;
+    }
+    /* File uploader custom styles */
+    [data-testid="stFileUploader"] > section {
+        background-color: white !important;
+        border: 2px dashed #cbd5e1 !important;
+        border-radius: 16px !important;
+        padding: 20px !important;
+        transition: all 0.3s ease !important;
+    }
+    [data-testid="stFileUploader"] > section:hover {
+        border-color: #3b82f6 !important;
+        background-color: #f8fafc !important;
+    }
+    
+    /* Uploaded Image Custom Sizing */
+    [data-testid="stImage"] img {
+        border-radius: 16px !important;
+        max-height: 400px !important;
+        object-fit: cover !important;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05) !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
-
 # ============================================================
-# GENERATE GRAD-CAM
-# ============================================================
-# NOTE: This returns plain in-memory numpy arrays (uint8 RGB
-# images) rather than filepaths. An earlier version of this
-# function wrote each image to disk as a PNG and returned the
-# filepath instead, on the assumption that passing PIL/numpy
-# objects straight through Gradio's output pipeline was
-# unreliable. In practice the opposite was true here: Gradio
-# would not reliably serve images back from that on-disk path
-# (regardless of which directory it lived in), producing blank
-# white boxes with no error anywhere in the Python traceback,
-# since the failure happened purely on Gradio's internal file-
-# serving layer, after generate_gradcam() had already returned
-# successfully. Returning raw arrays sidesteps that layer
-# entirely — gr.Image renders them directly from memory — and
-# is the version confirmed to work in this environment.
-
-def generate_gradcam(
-    image,
-    prediction_index
-):
-
-    image = image.convert(
-        "RGB"
-    )
-
-    input_tensor = (
-        inference_transform(
-            image
-        )
-        .unsqueeze(0)
-        .to(device)
-    )
-
-
-    targets = [
-        ClassifierOutputTarget(
-            prediction_index
-        )
-    ]
-
-
-    with GradCAM(
-        model=cam_model,
-        target_layers=[
-            target_layer
-        ]
-    ) as cam:
-
-        grayscale_cam = cam(
-            input_tensor=input_tensor,
-            targets=targets
-        )[0]
-
-
-    rgb_image = (
-        input_tensor[0]
-        .detach()
-        .cpu()
-        .numpy()
-    )
-
-    rgb_image = np.transpose(
-        rgb_image,
-        (1, 2, 0)
-    )
-
-
-    rgb_image = (
-        rgb_image * CAM_STD
-        + CAM_MEAN
-    )
-
-    rgb_image = np.clip(
-        rgb_image,
-        0,
-        1
-    )
-
-
-    # Pure heatmap
-    heatmap = show_cam_on_image(
-        np.zeros_like(
-            rgb_image
-        ),
-        grayscale_cam,
-        use_rgb=True
-    )
-
-
-    # Original + Grad-CAM
-    overlay = show_cam_on_image(
-        rgb_image.astype(
-            np.float32
-        ),
-        grayscale_cam,
-        use_rgb=True
-    )
-
-
-    # ========================================================
-    # RETURN RAW ARRAYS — NO DISK I/O
-    # ========================================================
-
-    original_array = np.ascontiguousarray(
-        (rgb_image * 255).astype(np.uint8)
-    )
-
-    heatmap_array = np.ascontiguousarray(
-        heatmap.astype(np.uint8)
-    )
-
-    overlay_array = np.ascontiguousarray(
-        overlay.astype(np.uint8)
-    )
-
-    return (
-
-        original_array,
-
-        heatmap_array,
-
-        overlay_array
-    )
-
-
-# ============================================================
-# PRODUCTION UI PREDICTION WRAPPER
+# HEADER / NAVBAR
 # ============================================================
 
-def _ui_predict_production_inner(
-    image
-):
-
-    # ========================================================
-    # NO IMAGE
-    # ========================================================
-
-    if image is None:
-
-        empty_prediction = """
-
-        <div class="prediction-card">
-
-            <div class="prediction-label">
-                🧠 AI PREDICTION
+st.markdown(
+    """
+    <div class="navbar">
+        <div class="nav-left">
+            <div class="logo-box">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4.5 10.5C7.5 5.5 16.5 5.5 19.5 10.5" />
+                    <path d="M4.5 13.5C7.5 18.5 16.5 18.5 19.5 13.5" />
+                    <path d="M9 8v8" />
+                    <path d="M12 7v10" />
+                    <path d="M15 8v8" />
+                </svg>
             </div>
-
-            <div class="diagnosis-name">
-                READY FOR ANALYSIS
+            <div>
+                <div class="logo-title">ORAL AI</div>
+                <div class="logo-subtitle">Intelligent Oral Histopathology Analysis Platform</div>
             </div>
-
-            <div class="full-diagnosis">
-                Upload a histopathology image and click
-                <b>Analyze Image with ORAL AI</b>.
-            </div>
-
         </div>
+        <div class="system-status">
+            <span class="status-dot"></span>
+            AI System Online &nbsp; | &nbsp; Model v1.0
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
+# ============================================================
+# HERO SECTION
+# ============================================================
+
+st.markdown(
+    """
+    <div class="hero-section">
+        <div class="hero-title">Analyze Oral Histopathology with AI</div>
+        <div class="hero-description">
+            Upload a histopathology image to receive an AI-assisted classification, confidence analysis, 
+            class probability distribution, and visual explanations through Grad-CAM.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ============================================================
+# MAIN APPLICATION ROWS (Columns)
+# ============================================================
+
+col1, col2 = st.columns([1, 1], gap="large")
+
+with col1:
+    st.markdown(
         """
-
-        return (
-            None,
-            None,
-            None,
-            empty_prediction,
-            {},
-            ""
-        )
-
-
-    # ========================================================
-    # IMAGE FORMAT SAFETY
-    # ========================================================
-
-    if not isinstance(
-        image,
-        Image.Image
-    ):
-
-        image = Image.fromarray(
-            image
-        )
-
-
-    image = image.convert(
-        "RGB"
+        <div class="sec-header" style="border-bottom: 2px solid #eef4ff; padding-bottom: 8px; margin-bottom: 20px;">
+            <div>
+                <div class="sec-title-text" style="font-size: 20px;">Histopathology Image</div>
+                <div class="sec-subtitle-text">Upload an oral tissue sample</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-
-    # ========================================================
-    # MODEL PREDICTION
-    # ========================================================
-
-    (
-        predicted_class,
-        confidence,
-        probabilities,
-        prediction_index
-
-    ) = predict_orchid(
-        image
+    uploaded_file = st.file_uploader(
+        "Choose an oral histopathology image file (PNG, JPG, JPEG)...",
+        type=["png", "jpg", "jpeg"],
+        label_visibility="collapsed",
     )
 
+    input_image = None
+    if uploaded_file is not None:
+        try:
+            input_image = Image.open(uploaded_file).convert("RGB")
+            st.image(input_image, caption="Uploaded Histopathology Slide", use_container_width=True)
+        except Exception as e:
+            st.error(f"Error loading image: {str(e)}")
 
-    # ========================================================
-    # GRAD-CAM
-    # ========================================================
-
-    (
-        original_img,
-        heatmap_img,
-        overlay_img
-
-    ) = generate_gradcam(
-        image,
-        prediction_index
+    analyze_clicked = st.button(
+        "Analyze Image with ORAL AI",
+        use_container_width=True,
+        type="primary",
+        disabled=(uploaded_file is None),
     )
 
-
-    # ========================================================
-    # CONFIDENCE
-    # ========================================================
-
-    confidence_pct = (
-        confidence * 100
+with col2:
+    st.markdown(
+        """
+        <div class="sec-header" style="border-bottom: 2px solid #eef4ff; padding-bottom: 8px; margin-bottom: 20px;">
+            <div>
+                <div class="sec-title-text" style="font-size: 20px;">AI Classification Result</div>
+                <div class="sec-subtitle-text">AI-assisted prediction and confidence analysis</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
+    # We store session state variables to hold results between interactions
+    if "prediction_made" not in st.session_state:
+        st.session_state.prediction_made = False
+        st.session_state.predicted_class = None
+        st.session_state.confidence_pct = 0.0
+        st.session_state.probabilities = {}
+        st.session_state.orig_img = None
+        st.session_state.heat_img = None
+        st.session_state.overlay_img = None
 
-    if confidence_pct >= 80:
+    # Handle Analysis logic
+    if analyze_clicked and input_image is not None:
+        with st.spinner("Analyzing tissue slide and generating explanations..."):
+            try:
+                # Prediction
+                pred_class, conf, probs, idx = predict_orchid(input_image)
+                
+                # Grad-CAM
+                orig, heat, overlay = generate_gradcam(input_image, idx)
+                
+                # Cache results in Session State
+                st.session_state.prediction_made = True
+                st.session_state.predicted_class = pred_class
+                st.session_state.confidence_pct = conf * 100
+                st.session_state.probabilities = probs
+                st.session_state.orig_img = orig
+                st.session_state.heat_img = heat
+                st.session_state.overlay_img = overlay
+            except Exception as e:
+                st.error("An error occurred during classification.")
+                st.exception(e)
 
-        confidence_status = (
-            "High Confidence"
-        )
+    # Render Prediction Cards
+    if st.session_state.prediction_made:
+        # Confidence logic details
+        pct = st.session_state.confidence_pct
+        if pct >= 80:
+            status_title = "High Confidence"
+            status_msg = "The model shows a strong preference for this classification."
+            status_class = "high-confidence"
+        elif pct >= 50:
+            status_title = "Moderate Confidence"
+            status_msg = "The prediction shows moderate separation from the remaining classes."
+            status_class = "moderate-confidence"
+        else:
+            status_title = "Low Confidence"
+            status_msg = "Class probabilities are closely distributed. Consider expert pathological review."
+            status_class = "low-confidence"
 
-        confidence_message = (
-            "The model shows a strong preference "
-            "for this classification."
-        )
+        display_class = st.session_state.predicted_class.upper()
+        full_diagnosis = CLASS_DESCRIPTIONS[st.session_state.predicted_class]
 
-        confidence_class = (
-            "high-confidence"
-        )
+        prediction_card_html = f"""
+        <div class="prediction-card">
+            <div class="prediction-label">AI PREDICTION</div>
+            <div class="diagnosis-name">{display_class}</div>
+            <div class="full-diagnosis">{full_diagnosis}</div>
+            <div class="confidence-box">
+                <div class="confidence-label">Prediction Confidence</div>
+                <div class="confidence-value {status_class}">{pct:.2f}%</div>
+            </div>
+            <div class="confidence-status">
+                <div class="status-title {status_class}">● {status_title}</div>
+                <div class="status-message">{status_msg}</div>
+            </div>
+        </div>
+        """
+        st.html(prediction_card_html)
 
-
-    elif confidence_pct >= 50:
-
-        confidence_status = (
-            "Moderate Confidence"
-        )
-
-        confidence_message = (
-            "The prediction shows moderate separation "
-            "from the remaining classes."
-        )
-
-        confidence_class = (
-            "moderate-confidence"
-        )
-
+        # Render Probability bars card
+        prob_bars_html = f"""
+        <div class="probability-card">
+            <div class="prob-header" style="font-size: 15px; font-weight: 700; color: #172033; border-bottom: 1px solid #f1f5f9; padding-bottom: 10px; margin-bottom: 15px;">Class Probability Distribution</div>
+        """
+        class_colors = {
+            "mdoscc": "linear-gradient(90deg, #ef4444, #fca5a5)",
+            "normal": "linear-gradient(90deg, #22c55e, #86efac)",
+            "osmf": "linear-gradient(90deg, #a855f7, #d8b4fe)",
+            "pdoscc": "linear-gradient(90deg, #f97316, #ffedd5)",
+            "wdoscc": "linear-gradient(90deg, #3b82f6, #93c5fd)",
+        }
+        for cls_name in CLASS_NAMES:
+            cls_pct = st.session_state.probabilities.get(cls_name, 0.0) * 100
+            cls_desc = CLASS_DESCRIPTIONS[cls_name]
+            bar_color = class_colors.get(cls_name, "linear-gradient(90deg, #2563eb, #38bdf8)")
+            prob_bars_html += f"""
+            <div class="prob-bar-container">
+                <div class="prob-labels">
+                    <span>{cls_name.upper()} ({cls_desc})</span>
+                    <span>{cls_pct:.2f}%</span>
+                </div>
+                <div class="prob-bar-bg">
+                    <div class="prob-bar-fill" style="width: {cls_pct}%; background: {bar_color};"></div>
+                </div>
+            </div>
+            """
+        prob_bars_html += "</div>"
+        st.html(prob_bars_html)
 
     else:
-
-        confidence_status = (
-            "Low Confidence"
+        # Default ready card
+        st.markdown(
+            """
+            <div class="prediction-card">
+                <div class="prediction-label">AI PREDICTION</div>
+                <div class="diagnosis-name" style="margin-top: 35px;">READY FOR ANALYSIS</div>
+                <div class="full-diagnosis" style="margin-top: 20px;">
+                    Upload a histopathology image on the left and click <b>Analyze Image with ORAL AI</b>.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-        confidence_message = (
-            "Class probabilities are closely distributed. "
-            "Consider expert pathological review."
-        )
+# ============================================================
+# EXPLAINABLE AI ANALYSIS (Visual Explanations)
+# ============================================================
 
-        confidence_class = (
-            "low-confidence"
-        )
-
-
-    # ========================================================
-    # DIAGNOSIS
-    # ========================================================
-
-    full_diagnosis = (
-        CLASS_DESCRIPTIONS[
-            predicted_class
-        ]
-    )
-
-    display_class = (
-        predicted_class.upper()
-    )
-
-
-    # ========================================================
-    # PREDICTION CARD
-    # ========================================================
-
-    prediction_html = f"""
-
-    <div class="prediction-card">
-
-        <div class="prediction-label">
-
-            🧠 AI PREDICTION
-
-        </div>
-
-
-        <div class="diagnosis-name">
-
-            {display_class}
-
-        </div>
-
-
-        <div class="full-diagnosis">
-
-            {full_diagnosis}
-
-        </div>
-
-
-        <div class="confidence-box">
-
-            <div class="confidence-label">
-
-                Prediction Confidence
-
-            </div>
-
-
-            <div class="
-                confidence-value
-                {confidence_class}
-            ">
-
-                {confidence_pct:.2f}%
-
-            </div>
-
-        </div>
-
-
-        <div class="confidence-status">
-
-            <div class="
-                status-title
-                {confidence_class}
-            ">
-
-                ● {confidence_status}
-
-            </div>
-
-
-            <div class="status-message">
-
-                {confidence_message}
-
-            </div>
-
-        </div>
-
-    </div>
-
+st.markdown(
     """
+    <div class="xai-section-title">
+        <div class="xai-main-title">Explainable AI Analysis</div>
+        <div class="xai-desc">Explore which regions of the histopathology image contributed most strongly to the AI model's prediction using Grad-CAM.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
+xai_col1, xai_col2, xai_col3 = st.columns(3)
 
-    # ========================================================
-    # DISCLAIMER
-    # ========================================================
+if st.session_state.prediction_made:
+    with xai_col1:
+        st.markdown('<div class="xai-card-title">Original Image</div>', unsafe_allow_html=True)
+        st.image(st.session_state.orig_img, use_container_width=True)
 
-    disclaimer_html = """
+    with xai_col2:
+        st.markdown('<div class="xai-card-title">Grad-CAM Attention</div>', unsafe_allow_html=True)
+        st.image(st.session_state.heat_img, use_container_width=True)
 
+    with xai_col3:
+        st.markdown('<div class="xai-card-title">Grad-CAM Overlay</div>', unsafe_allow_html=True)
+        st.image(st.session_state.overlay_img, use_container_width=True)
+else:
+    # Render Placeholder grids
+    with xai_col1:
+        st.markdown('<div class="xai-placeholder-box">Upload and analyze image to view original slide</div>', unsafe_allow_html=True)
+    with xai_col2:
+        st.markdown('<div class="xai-placeholder-box">Upload and analyze image to view Grad-CAM attention</div>', unsafe_allow_html=True)
+    with xai_col3:
+        st.markdown('<div class="xai-placeholder-box">Upload and analyze image to view overlay visualization</div>', unsafe_allow_html=True)
+
+# ============================================================
+# DISCLAIMER
+# ============================================================
+
+st.markdown(
+    """
     <div class="disclaimer">
-
         ⚠️ <b>Research and Educational Use Only</b><br>
-
-        This AI system is intended for research and
-        educational purposes. It is not designed to replace
-        professional pathological diagnosis or clinical
-        decision-making.
-
+        This AI system is intended for research and educational purposes. It is not designed to replace professional pathological diagnosis or clinical decision-making.
     </div>
+    """,
+    unsafe_allow_html=True,
+)
 
+# ============================================================
+# MODEL INFORMATION
+# ============================================================
+
+st.html(
     """
-
-
-    # ========================================================
-    # EXACTLY SIX OUTPUTS
-    # ========================================================
-
-    return (
-
-        original_img,
-
-        heatmap_img,
-
-        overlay_img,
-
-        prediction_html,
-
-        probabilities,
-
-        disclaimer_html
-
-    )
-
-
-# ============================================================
-# ERROR-SURFACING WRAPPER
-# ============================================================
-
-def ui_predict_production(
-    image
-):
-
-    try:
-
-        return _ui_predict_production_inner(
-            image
-        )
-
-    except Exception as exc:
-
-        traceback.print_exc()
-
-        error_details = (
-            traceback.format_exc()
-        )
-
-        error_html = f"""
-
-        <div class="prediction-card">
-
-            <div class="prediction-label">
-                ⚠️ ERROR DURING ANALYSIS
+    <div class="model-info-card">
+        <h3 style="margin-top:0; color:#172033; font-weight:800; font-size:22px; margin-bottom: 6px;">🧬 Model Architecture & Statistics</h3>
+        <p style="color:#64748b; font-size:14px; margin-bottom: 24px;">ORAL AI is a hybrid multimodal classification model guided by semantic prompts.</p>
+        
+        <div style="display: flex; gap: 40px; flex-wrap: wrap;">
+            <!-- Left Side: Architecture Details -->
+            <div style="flex: 2; min-width: 300px;">
+                <h4 style="color:#172033; font-size:15px; font-weight:700; margin-bottom: 12px; border-bottom: 2px solid #eef4ff; padding-bottom: 6px;">Component Architecture</h4>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr style="border-bottom: 1px solid #f1f5f9;">
+                        <td style="padding: 10px 0; font-size: 13px; font-weight: 700; color: #64748b; width: 40%;">Visual Backbone</td>
+                        <td style="padding: 10px 0; font-size: 13px; font-weight: 600; color: #1e293b;">Swin Transformer (Tiny)</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #f1f5f9;">
+                        <td style="padding: 10px 0; font-size: 13px; font-weight: 700; color: #64748b;">Semantic Encoder</td>
+                        <td style="padding: 10px 0; font-size: 13px; font-weight: 600; color: #1e293b;">CLIP Text Embeddings (ViT-B-16)</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #f1f5f9;">
+                        <td style="padding: 10px 0; font-size: 13px; font-weight: 700; color: #64748b;">Fusion Strategy</td>
+                        <td style="padding: 10px 0; font-size: 13px; font-weight: 600; color: #1e293b;">Multi-Stage Cross-Attention</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 10px 0; font-size: 13px; font-weight: 700; color: #64748b;">Decoder Backbone</td>
+                        <td style="padding: 10px 0; font-size: 13px; font-weight: 600; color: #1e293b;">U-Net Inspired Decoder</td>
+                    </tr>
+                </table>
             </div>
-
-            <div class="diagnosis-name"
-                 style="color:#fb7185; font-size:20px;">
-                {type(exc).__name__}
+            
+            <!-- Right Side: Key Performance Metrics -->
+            <div style="flex: 1; min-width: 200px;">
+                <h4 style="color:#172033; font-size:15px; font-weight:700; margin-bottom: 12px; border-bottom: 2px solid #eef4ff; padding-bottom: 6px;">Performance Metrics</h4>
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 12px; font-weight: 700; color: #166534;">Test Accuracy</span>
+                        <span style="font-size: 16px; font-weight: 800; color: #15803d;">95.73%</span>
+                    </div>
+                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 12px; font-weight: 700; color: #166534;">Macro F1-Score</span>
+                        <span style="font-size: 16px; font-weight: 800; color: #15803d;">96.20%</span>
+                    </div>
+                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 12px; font-weight: 700; color: #166534;">Macro ROC-AUC</span>
+                        <span style="font-size: 16px; font-weight: 800; color: #15803d;">0.9976</span>
+                    </div>
+                </div>
             </div>
-
-            <div class="full-diagnosis"
-                 style="text-align:left;">
-                {str(exc)}
-            </div>
-
-            <div class="confidence-box"
-                 style="text-align:left;">
-                <pre style="
-                    white-space: pre-wrap;
-                    word-break: break-word;
-                    font-size: 11px;
-                    color: #fca5a5;
-                    margin: 0;
-                ">{error_details}</pre>
-            </div>
-
         </div>
-
-        """
-
-        return (
-            None,
-            None,
-            None,
-            error_html,
-            {},
-            ""
-        )
-
-
-# ============================================================
-# FORCE LIGHT THEME
-# ============================================================
-
-FORCE_LIGHT_THEME_JS = """
-function forceLightTheme() {
-    document.body.classList.remove('dark');
-    document.documentElement.classList.remove('dark');
-}
-"""
-
-
-# ============================================================
-# PRODUCTION CSS — CELL 19 STYLE
-# ============================================================
-
-CUSTOM_CSS = """
-
-/* =========================================================
-   GLOBAL FONT — applies to everything, including native
-   Gradio components (labels, buttons, dropzone text), so
-   custom gr.HTML() headers and native Gradio UI don't
-   visibly mismatch.
-========================================================= */
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
-/* =========================================================
-   ROOT FIX — KILL DARK THEME AT THE SOURCE
-========================================================= */
-
-:root,
-.dark,
-.gradio-container,
-.gradio-container.dark {
-    --body-background-fill: #f4f7fb !important;
-    --background-fill-primary: #ffffff !important;
-    --background-fill-secondary: #f4f7fb !important;
-    --block-background-fill: #ffffff !important;
-    --border-color-primary: #dbe3ef !important;
-    --border-color-accent: #dbe3ef !important;
-    --input-background-fill: #ffffff !important;
-    --color-background-primary: #ffffff !important;
-    --color-background-secondary: #f4f7fb !important;
-    --body-text-color: #1e293b !important;
-    --body-text-color-subdued: #64748b !important;
-    --neutral-50: #ffffff !important;
-    --neutral-100: #f4f7fb !important;
-    --neutral-200: #eef2f7 !important;
-    --neutral-700: #334155 !important;
-    --neutral-800: #1e293b !important;
-    --neutral-900: #172033 !important;
-}
-
-.gradio-container .generating,
-.gradio-container [class*="pending"] {
-    opacity: 1 !important;
-}
-
-*,
-*::before,
-*::after {
-
-    font-family:
-        'Inter',
-        -apple-system,
-        BlinkMacSystemFont,
-        'Segoe UI',
-        Roboto,
-        sans-serif !important;
-}
-
-
-html,
-body,
-#root {
-
-    margin: 0 !important;
-    padding: 0 !important;
-
-    width: 100% !important;
-
-    min-height: 100vh !important;
-
-    background: #f4f7fb !important;
-
-    font-family:
-        'Inter',
-        -apple-system,
-        BlinkMacSystemFont,
-        'Segoe UI',
-        Roboto,
-        sans-serif !important;
-}
-
-
-.gradio-container {
-
-    width: 100% !important;
-
-    max-width: none !important;
-
-    min-height: 100vh !important;
-
-    margin: 0 !important;
-
-    padding: 0 !important;
-
-    background: #f4f7fb !important;
-
-    color: #1e293b !important;
-
-    font-family:
-        'Inter',
-        -apple-system,
-        BlinkMacSystemFont,
-        'Segoe UI',
-        Roboto,
-        sans-serif !important;
-}
-
-
-/* =========================================================
-   APP WRAPPER
-========================================================= */
-
-.app-wrapper {
-
-    width: 100% !important;
-
-    max-width: 1500px !important;
-
-    margin: 0 auto !important;
-
-    padding:
-        28px
-        45px
-        70px
-        45px !important;
-
-    box-sizing: border-box !important;
-}
-
-
-/* =========================================================
-   NAVBAR
-========================================================= */
-
-.navbar {
-
-    width: 100%;
-
-    box-sizing: border-box;
-
-    display: flex;
-
-    justify-content: space-between;
-
-    align-items: center;
-
-    padding:
-        18px
-        25px;
-
-    border-radius: 20px;
-
-    background:
-        linear-gradient(
-            135deg,
-            #172033,
-            #263b5c
-        );
-
-    box-shadow:
-        0 12px 35px
-        rgba(15,23,42,0.18);
-}
-
-
-.nav-left {
-
-    display: flex;
-
-    align-items: center;
-
-    gap: 14px;
-}
-
-
-.logo-box {
-
-    width: 50px;
-
-    height: 50px;
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: center;
-
-    border-radius: 15px;
-
-    font-size: 23px;
-
-    background:
-        linear-gradient(
-            135deg,
-            #2563eb,
-            #38bdf8
-        );
-}
-
-
-.logo-title {
-
-    color: white;
-
-    font-size: 22px;
-
-    font-weight: 700;
-
-    letter-spacing: 1px;
-}
-
-
-.logo-subtitle {
-
-    margin-top: 3px;
-
-    color: #a5b4c8;
-
-    font-size: 11px;
-}
-
-
-.system-status {
-
-    padding:
-        10px
-        16px;
-
-    border-radius: 14px;
-
-    color: #cbd5e1;
-
-    font-size: 11px;
-
-    background:
-        rgba(
-            255,
-            255,
-            255,
-            0.08
-        );
-}
-
-
-.status-dot {
-
-    display: inline-block;
-
-    width: 7px;
-
-    height: 7px;
-
-    border-radius: 50%;
-
-    background: #22c55e;
-
-    margin-right: 7px;
-}
-
-
-/* =========================================================
-   HERO
-========================================================= */
-
-.hero-section {
-
-    text-align: center;
-
-    padding:
-        70px
-        20px
-        75px
-        20px;
-}
-
-
-.hero-title {
-
-    font-size: 36px;
-
-    font-weight: 700;
-
-    color: #172033;
-}
-
-
-.hero-description {
-
-    max-width: 800px;
-
-    margin:
-        16px
-        auto
-        0
-        auto;
-
-    line-height: 1.8;
-
-    font-size: 15px;
-
-    color: #64748b;
-}
-
-
-/* =========================================================
-   ANALYSIS ROW
-========================================================= */
-
-.analysis-row {
-
-    align-items:
-        flex-start !important;
-
-    gap: 35px !important;
-}
-
-
-.analysis-row > .column {
-
-    align-self:
-        flex-start !important;
-}
-
-
-/* =========================================================
-   SECTION HEADERS
-========================================================= */
-
-.section-header {
-
-    height: 72px;
-
-    display: flex;
-
-    align-items: center;
-
-    gap: 13px;
-
-    margin-bottom: 18px;
-}
-
-
-.section-icon {
-
-    width: 45px;
-
-    height: 45px;
-
-    display: flex;
-
-    align-items: center;
-
-    justify-content: center;
-
-    border-radius: 13px;
-
-    background: #eef4ff;
-
-    font-size: 20px;
-}
-
-
-.section-title {
-
-    font-size: 19px;
-
-    font-weight: 700;
-
-    color: #1e293b;
-}
-
-
-.section-subtitle {
-
-    margin-top: 5px;
-
-    font-size: 11px;
-
-    color: #64748b;
-}
-
-
-/* =========================================================
-   IMAGE FRAME
-========================================================= */
-
-.image-frame {
-
-    border-radius:
-        18px !important;
-
-    overflow:
-        hidden !important;
-
-    border:
-        1px solid
-        #dbe3ef !important;
-
-    background:
-        white !important;
-
-    box-shadow:
-        0 8px 25px
-        rgba(15,23,42,0.06);
-}
-
-
-/* =========================================================
-   GRADIO IMAGE UPLOAD — TEXT VISIBILITY FIX
-========================================================= */
-
-.image-frame,
-.image-frame * {
-    opacity: 1 !important;
-}
-
-.image-frame {
-    color: #475569 !important;
-}
-
-.image-frame .wrap,
-.image-frame .image-container,
-.image-frame .upload-container {
-    color: #475569 !important;
-}
-
-.image-frame [data-testid="upload-text"],
-.image-frame .upload-text,
-.image-frame .upload-text *,
-.image-frame .or,
-.image-frame .or *,
-.image-frame .drop-text,
-.image-frame .drop-text *,
-.image-frame p,
-.image-frame span {
-    color: #64748b !important;
-    opacity: 1 !important;
-}
-
-.image-frame svg {
-    color: #64748b !important;
-    opacity: 1 !important;
-}
-
-.image-frame label,
-.image-frame label span {
-    color: #334155 !important;
-    opacity: 1 !important;
-}
-
-.image-frame .empty {
-    background: #ffffff !important;
-}
-
-.image-frame .empty svg,
-.image-frame .empty svg path {
-    color: #94a3b8 !important;
-    fill: #94a3b8 !important;
-}
-
-.image-frame [data-testid="image"] {
-    background-color: #ffffff !important;
-}
-
-.image-frame img {
-    background-color: #ffffff !important;
-    opacity: 1 !important;
-}
-
-/* =========================================================
-   COMPONENT LABEL BADGES
-========================================================= */
-
-.gradio-container {
-    --block-label-background-fill: #eef4ff !important;
-    --block-label-text-color: #1e293b !important;
-    --block-label-border-color: #dbe3ef !important;
-    --block-label-shadow: none !important;
-    --block-label-margin: 0 !important;
-
-    --button-primary-background-fill: linear-gradient(135deg, #2563eb, #38bdf8) !important;
-    --button-primary-background-fill-hover: linear-gradient(135deg, #1d4ed8, #0ea5e9) !important;
-    --button-primary-border-color: transparent !important;
-    --button-primary-border-color-hover: transparent !important;
-    --button-primary-text-color: #ffffff !important;
-}
-
-[data-testid="block-label"],
-.image-frame [data-testid="block-label"],
-.probability-card [data-testid="block-label"] {
-    background: #eef4ff !important;
-    color: #1e293b !important;
-    border: 1px solid #dbe3ef !important;
-    box-shadow: none !important;
-    opacity: 1 !important;
-}
-
-[data-testid="block-label"] svg,
-[data-testid="block-label"] * {
-    color: #1e293b !important;
-    fill: #1e293b !important;
-    opacity: 1 !important;
-}
-
-[data-testid="block-label"] svg,
-[data-testid="block-label"] img {
-    display: none !important;
-}
-
-/* =========================================================
-   PROBABILITY CARD (gr.Label)
-========================================================= */
-
-.probability-card,
-.probability-card > div,
-.probability-card .wrap,
-.probability-card .container,
-.probability-card [data-testid="label"] {
-    background: #ffffff !important;
-}
-
-.probability-card .empty,
-.probability-card .empty * {
-    background: #ffffff !important;
-}
-
-.probability-card .empty svg,
-.probability-card .empty svg path {
-    color: #94a3b8 !important;
-    fill: #94a3b8 !important;
-}
-
-.probability-card label,
-.probability-card .label,
-.probability-card td,
-.probability-card th,
-.probability-card span,
-.probability-card p {
-    color: #1e293b !important;
-}
-
-.probability-card .output-class,
-.probability-card [class*="output-class"] {
-    color: #1e293b !important;
-    background: transparent !important;
-}
-
-.probability-card * {
-    color: #1e293b !important;
-}
-
-.probability-card .bar,
-.probability-card .bar-container,
-.probability-card .confidence {
-    background: #f1f5f9 !important;
-}
-
-/* =========================================================
-   PREDICTION CARD — TEXT VISIBILITY
-========================================================= */
-
-.prediction-card {
-    color: #f8fafc !important;
-}
-
-.prediction-card .prediction-label {
-    color: #cbd5e1 !important;
-    opacity: 1 !important;
-}
-
-.prediction-card .diagnosis-name {
-    color: #7dd3fc !important;
-    opacity: 1 !important;
-}
-
-.prediction-card .full-diagnosis {
-    color: #f1f5f9 !important;
-    opacity: 1 !important;
-}
-
-.prediction-card .confidence-label {
-    color: #cbd5e1 !important;
-    opacity: 1 !important;
-}
-
-.prediction-card .status-message {
-    color: #e2e8f0 !important;
-    opacity: 1 !important;
-}
-
-/* =========================================================
-   ANALYZE BUTTON
-========================================================= */
-
-#analyze_button {
-
-    margin-top:
-        16px !important;
-}
-
-
-#analyze_button button {
-
-    width:
-        100% !important;
-
-    height:
-        54px !important;
-
-    border:
-        none !important;
-
-    border-radius:
-        14px !important;
-
-    font-size:
-        14px !important;
-
-    font-weight:
-        700 !important;
-
-    background:
-        linear-gradient(
-            135deg,
-            #2563eb,
-            #38bdf8
-        ) !important;
-
-    box-shadow:
-        0 10px 25px
-        rgba(37,99,235,0.25)
-        !important;
-}
-
-
-/* =========================================================
-   PREDICTION CARD
-========================================================= */
-
-.prediction-card {
-
-    min-height:
-        430px;
-
-    box-sizing:
-        border-box;
-
-    padding:
-        42px
-        35px;
-
-    border-radius:
-        22px;
-
-    text-align:
-        center;
-
-    background:
-        linear-gradient(
-            145deg,
-            #16213a,
-            #202f50
-        );
-
-    box-shadow:
-        0 15px 40px
-        rgba(15,23,42,0.20);
-}
-
-
-.prediction-label {
-
-    color:
-        #a5b4c8;
-
-    font-size:
-        11px;
-
-    font-weight:
-        700;
-
-    letter-spacing:
-        2px;
-}
-
-
-.diagnosis-name {
-
-    margin-top:
-        25px;
-
-    font-size:
-        34px;
-
-    font-weight:
-        800;
-
-    letter-spacing:
-        2px;
-
-    color:
-        #7dd3fc;
-}
-
-
-.full-diagnosis {
-
-    max-width:
-        520px;
-
-    margin:
-        12px
-        auto
-        0;
-
-    font-size:
-        14px;
-
-    line-height:
-        1.6;
-
-    color:
-        #e2e8f0;
-}
-
-
-/* =========================================================
-   CONFIDENCE BOX
-========================================================= */
-
-.confidence-box {
-
-    margin-top:
-        28px;
-
-    padding:
-        18px;
-
-    border-radius:
-        14px;
-
-    background:
-        rgba(
-            15,
-            23,
-            42,
-            0.55
-        );
-}
-
-
-.confidence-label {
-
-    color:
-        #94a3b8;
-
-    font-size:
-        12px;
-}
-
-
-.confidence-value {
-
-    margin-top:
-        7px;
-
-    font-size:
-        38px;
-
-    font-weight:
-        800;
-}
-
-
-.high-confidence {
-
-    color:
-        #4ade80 !important;
-}
-
-
-.moderate-confidence {
-
-    color:
-        #facc15 !important;
-}
-
-
-.low-confidence {
-
-    color:
-        #fb7185 !important;
-}
-
-
-/* =========================================================
-   CONFIDENCE STATUS
-========================================================= */
-
-.confidence-status {
-
-    margin-top:
-        18px;
-
-    padding:
-        16px;
-
-    border-radius:
-        14px;
-
-    text-align:
-        left;
-
-    background:
-        rgba(
-            255,
-            255,
-            255,
-            0.05
-        );
-}
-
-
-.status-title {
-
-    font-size:
-        13px;
-
-    font-weight:
-        700;
-}
-
-
-.status-message {
-
-    margin-top:
-        7px;
-
-    color:
-        #cbd5e1;
-
-    font-size:
-        12px;
-
-    line-height:
-        1.6;
-}
-
-
-/* =========================================================
-   PROBABILITY CARD
-========================================================= */
-
-.probability-card {
-
-    margin-top:
-        18px;
-
-    padding:
-        15px;
-
-    border-radius:
-        16px;
-
-    background:
-        white;
-
-    border:
-        1px solid
-        #dbe3ef;
-
-    box-shadow:
-        0 8px 25px
-        rgba(15,23,42,0.05);
-}
-
-
-/* =========================================================
-   EXPLAINABLE AI
-========================================================= */
-
-.xai-header {
-
-    text-align:
-        center;
-
-    margin-top:
-        60px !important;
-
-    margin-bottom:
-        35px;
-}
-
-
-.xai-header h2 {
-
-    font-size:
-        27px;
-
-    color:
-        #1e293b;
-}
-
-
-.xai-header p {
-
-    max-width:
-        700px;
-
-    margin:
-        12px
-        auto;
-
-    color:
-        #64748b;
-
-    font-size:
-        14px;
-
-    line-height:
-        1.7;
-}
-
-
-/* =========================================================
-   DISCLAIMER
-========================================================= */
-
-.disclaimer {
-
-    margin-top:
-        40px;
-
-    padding:
-        20px
-        24px;
-
-    border-radius:
-        15px;
-
-    background:
-        #fffaf0;
-
-    border-left:
-        5px solid
-        #f59e0b;
-
-    color:
-        #92400e;
-
-    line-height:
-        1.6;
-
-    opacity: 1 !important;
-}
-
-.disclaimer,
-.disclaimer *,
-.disclaimer b,
-.disclaimer strong {
-    opacity: 1 !important;
-    color: #92400e !important;
-}
-
-
-/* =========================================================
-   MODEL INFORMATION
-========================================================= */
-
-.model-info {
-    margin-top: 50px !important;
-    padding: 35px !important;
-    border-radius: 20px !important;
-    background: #ffffff !important;
-    border: 1px solid #dbe3ef !important;
-    box-shadow: 0 8px 25px rgba(15,23,42,0.05);
-    color: #1e293b !important;
-}
-
-.model-info .prose,
-.model-info .markdown,
-.model-info .prose *,
-.model-info .markdown *,
-.model-info h1,
-.model-info h2,
-.model-info h3,
-.model-info h4,
-.model-info p,
-.model-info li,
-.model-info th,
-.model-info td,
-.model-info strong,
-.model-info b {
-    color: #1e293b !important;
-}
-
-.model-info h2 {
-    color: #172033 !important;
-    font-size: 22px !important;
-    font-weight: 700 !important;
-}
-
-.model-info h3 {
-    color: #1e293b !important;
-    font-size: 17px !important;
-    font-weight: 700 !important;
-    margin-top: 28px !important;
-}
-
-.model-info table {
-    width: 100% !important;
-    border-collapse: collapse !important;
-    color: #1e293b !important;
-}
-
-.model-info th {
-    color: #172033 !important;
-    background: #f8fafc !important;
-    font-weight: 700 !important;
-    text-align: left !important;
-    border: 1px solid #dbe3ef !important;
-    padding: 10px !important;
-}
-
-.model-info td {
-    color: #475569 !important;
-    background: #ffffff !important;
-    border: 1px solid #dbe3ef !important;
-    padding: 10px !important;
-}
-
-.model-info li {
-    color: #475569 !important;
-    margin-bottom: 8px !important;
-}
-
-.model-info p {
-    color: #475569 !important;
-    line-height: 1.6 !important;
-}
-
-/* =========================================================
-   RESPONSIVE DESIGN
-========================================================= */
-
-@media (max-width: 900px) {
-
-    .app-wrapper {
-
-        padding:
-            20px !important;
-    }
-
-
-    .navbar {
-
-        padding:
-            15px
-            18px;
-    }
-
-
-    .system-status {
-
-        display:
-            none;
-    }
-
-
-    .hero-section {
-
-        padding:
-            50px
-            10px !important;
-    }
-
-
-    .hero-title {
-
-        font-size:
-            28px !important;
-    }
-
-
-    .analysis-row {
-
-        gap:
-            20px !important;
-    }
-
-
-    .prediction-card {
-
-        min-height:
-            auto;
-    }
-
-}
-
-
-@media (max-width: 600px) {
-
-    .logo-title {
-
-        font-size:
-            18px;
-    }
-
-
-    .logo-subtitle {
-
-        font-size:
-            9px;
-    }
-
-
-    .hero-title {
-
-        font-size:
-            25px !important;
-    }
-
-
-    .hero-description {
-
-        font-size:
-            13px;
-    }
-
-
-    .diagnosis-name {
-
-        font-size:
-            27px;
-    }
-
-}
-
-"""
-
-
-# ============================================================
-# CREATE GRADIO APPLICATION
-# ============================================================
-
-with gr.Blocks(
-
-    title=
-        "ORAL AI — Intelligent Oral Histopathology Analysis",
-
-    css=
-        CUSTOM_CSS,
-
-    js=
-        FORCE_LIGHT_THEME_JS
-
-) as demo:
-
-
-    # ========================================================
-    # MAIN APP WRAPPER
-    # ========================================================
-
-    with gr.Column(
-        elem_classes=[
-            "app-wrapper"
-        ]
-    ):
-
-
-        # ====================================================
-        # NAVBAR
-        # ====================================================
-
-        gr.HTML(
-            """
-
-            <div class="navbar">
-
-                <div class="nav-left">
-
-                    <div class="logo-box">
-                        🧬
-                    </div>
-
-                    <div>
-
-                        <div class="logo-title">
-                            ORAL AI
-                        </div>
-
-                        <div class="logo-subtitle">
-                            Intelligent Oral Histopathology Analysis Platform
-                        </div>
-
-                    </div>
-
-                </div>
-
-
-                <div class="system-status">
-
-                    <span class="status-dot"></span>
-
-                    AI System Online
-                    &nbsp; | &nbsp;
-                    Model v1.0
-
-                </div>
-
-            </div>
-
-            """
-        )
-
-
-        # ====================================================
-        # HERO
-        # ====================================================
-
-        gr.HTML(
-            """
-
-            <div class="hero-section">
-
-                <div class="hero-title">
-
-                    Analyze Oral Histopathology with AI
-
-                </div>
-
-
-                <div class="hero-description">
-
-                    Upload a histopathology image to receive an
-                    AI-assisted classification, confidence analysis,
-                    class probability distribution, and visual
-                    explanation through Grad-CAM.
-
-                </div>
-
-            </div>
-
-            """
-        )
-
-
-        # ====================================================
-        # MAIN ANALYSIS
-        # ====================================================
-
-        with gr.Row(
-            elem_classes=[
-                "analysis-row"
-            ]
-        ):
-
-
-            # =================================================
-            # LEFT — IMAGE
-            # =================================================
-
-            with gr.Column(
-                scale=1
-            ):
-
-
-                gr.HTML(
-                    """
-
-                    <div class="section-header">
-
-                        <div class="section-icon">
-                            🔬
-                        </div>
-
-                        <div>
-
-                            <div class="section-title">
-                                Histopathology Image
-                            </div>
-
-                            <div class="section-subtitle">
-                                Upload an oral tissue sample
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                    """
-                )
-
-
-                input_image = gr.Image(
-
-                    type="pil",
-
-                    label=
-                        "Upload Histopathology Image",
-
-                    height=430,
-
-                    elem_classes=[
-                        "image-frame"
-                    ]
-                )
-
-
-                predict_button = gr.Button(
-
-                    "✨ Analyze Image with ORAL AI",
-
-                    variant="primary",
-
-                    elem_id=
-                        "analyze_button"
-                )
-
-
-            # =================================================
-            # RIGHT — PREDICTION
-            # =================================================
-
-            with gr.Column(
-                scale=1
-            ):
-
-
-                gr.HTML(
-                    """
-
-                    <div class="section-header">
-
-                        <div class="section-icon">
-                            🧠
-                        </div>
-
-                        <div>
-
-                            <div class="section-title">
-                                AI Classification Result
-                            </div>
-
-                            <div class="section-subtitle">
-                                AI-assisted prediction and confidence analysis
-                            </div>
-
-                        </div>
-
-                    </div>
-
-                    """
-                )
-
-
-                prediction_output = gr.HTML(
-
-                    value="""
-
-                    <div class="prediction-card">
-
-                        <div class="prediction-label">
-                            🧠 AI PREDICTION
-                        </div>
-
-                        <div class="diagnosis-name">
-                            READY FOR ANALYSIS
-                        </div>
-
-                        <div class="full-diagnosis">
-
-                            Upload a histopathology image and run
-                            ORAL AI to begin the classification.
-
-                        </div>
-
-                    </div>
-
-                    """
-                )
-
-
-                with gr.Column(
-                    elem_classes=[
-                        "probability-card"
-                    ]
-                ):
-
-                    probability_output = gr.Label(
-
-                        label=
-                            "📊 Class Probability Distribution",
-
-                        num_top_classes=5
-                    )
-
-
-        # ====================================================
-        # EXPLAINABLE AI HEADER
-        # ====================================================
-
-        gr.HTML(
-            """
-
-            <div class="xai-header">
-
-                <h2>
-                    🔍 Explainable AI Analysis
-                </h2>
-
-                <p>
-
-                    Explore which regions of the histopathology
-                    image contributed most strongly to the AI
-                    model's prediction using Grad-CAM
-                    visualization.
-
-                </p>
-
-            </div>
-
-            """
-        )
-
-
-        # ====================================================
-        # GRAD-CAM OUTPUTS
-        # ====================================================
-
-        with gr.Row():
-
-
-            original_output = gr.Image(
-
-                label=
-                    "Original Image",
-
-                height=320,
-
-                elem_classes=[
-                    "image-frame"
-                ]
-            )
-
-
-            heatmap_output = gr.Image(
-
-                label=
-                    "Grad-CAM Attention",
-
-                height=320,
-
-                elem_classes=[
-                    "image-frame"
-                ]
-            )
-
-
-            overlay_output = gr.Image(
-
-                label=
-                    "Grad-CAM Overlay",
-
-                height=320,
-
-                elem_classes=[
-                    "image-frame"
-                ]
-            )
-
-
-        # ====================================================
-        # DISCLAIMER
-        # ====================================================
-
-        disclaimer_output = gr.HTML()
-
-
-        # ====================================================
-        # MODEL INFORMATION
-        # ====================================================
-
-        with gr.Column(
-            elem_classes=[
-                "model-info"
-            ]
-        ):
-
-            gr.Markdown(
-                """
-
-## 🧠 Model Information
-
-| Component | Description |
-|---|---|
-| **Visual Backbone** | Swin Transformer |
-| **Semantic Guidance** | CLIP Text Embeddings |
-| **Fusion Strategy** | Multi-Stage Cross Attention |
-| **Decoder** | U-Net Inspired Decoder |
-| **Classifier** | 5-Class Oral Histopathology Classification |
-
-### ORCHID Dataset Classes
-
-- 🔴 **MDOSCC** — Moderately Differentiated OSCC
-- 🟢 **NORMAL** — Normal Oral Tissue
-- 🟣 **OSMF** — Oral Submucous Fibrosis
-- 🟠 **PDOSCC** — Poorly Differentiated OSCC
-- 🔵 **WDOSCC** — Well Differentiated OSCC
-
-### Model Performance
-
-**Test Accuracy:** 95.73%
-
-**Macro F1-Score:** 96.20%
-
-**Macro ROC-AUC:** 0.9976
-
-"""
-            )
-
-
-    # ========================================================
-    # CONNECT BUTTON
-    # ========================================================
-
-    predict_button.click(
-
-        fn=
-            ui_predict_production,
-
-        inputs=
-            input_image,
-
-        outputs=[
-
-            original_output,
-
-            heatmap_output,
-
-            overlay_output,
-
-            prediction_output,
-
-            probability_output,
-
-            disclaimer_output
-
-        ]
-    )
-
-
-# ============================================================
-# LAUNCH
-# ============================================================
-
-if __name__ == "__main__":
-
-    print(
-        "✓ ORAL AI Production Interface created successfully"
-    )
-
-    demo.queue().launch()
+        
+        <div style="margin-top:35px; border-top: 1px solid #f1f5f9; padding-top: 25px;">
+            <div style="font-weight:700; font-size:14px; color:#172033; margin-bottom:14px;">ORCHID Dataset Classification Classes:</div>
+            <ul style="list-style-type: none; padding-left: 0; margin: 0; display: flex; flex-direction: column; gap: 10px;">
+                <li style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: #475569;">
+                    <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef4444;"></span>
+                    <strong>MDOSCC</strong> — Moderately Differentiated Oral Squamous Cell Carcinoma
+                </li>
+                <li style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: #475569;">
+                    <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #22c55e;"></span>
+                    <strong>NORMAL</strong> — Normal Oral Tissue
+                </li>
+                <li style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: #475569;">
+                    <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #a855f7;"></span>
+                    <strong>OSMF</strong> — Oral Submucous Fibrosis
+                </li>
+                <li style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: #475569;">
+                    <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f97316;"></span>
+                    <strong>PDOSCC</strong> — Poorly Differentiated Oral Squamous Cell Carcinoma
+                </li>
+                <li style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: #475569;">
+                    <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #3b82f6;"></span>
+                    <strong>WDOSCC</strong> — Well Differentiated Oral Squamous Cell Carcinoma
+                </li>
+            </ul>
+        </div>
+    </div>
+    """
+)

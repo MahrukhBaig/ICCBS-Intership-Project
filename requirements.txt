@@ -7,3 +7,4 @@ numpy
 Pillow
 grad-cam
 opencv-python-headless
+streamlit
