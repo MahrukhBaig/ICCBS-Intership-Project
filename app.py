@@ -779,6 +779,25 @@ st.markdown(
         border-color: #3b82f6 !important;
         background-color: #f8fafc !important;
     }
+    [data-testid="stFileUploader"] button, 
+    [data-testid="stFileUploader"] [data-testid="baseButton-secondary"] {
+        background: linear-gradient(135deg, #3b82f6, #60a5fa) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 10px !important;
+        padding: 8px 18px !important;
+        font-weight: 600 !important;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15) !important;
+        transition: all 0.2s ease !important;
+    }
+    [data-testid="stFileUploader"] button:hover, 
+    [data-testid="stFileUploader"] [data-testid="baseButton-secondary"]:hover {
+        background: linear-gradient(135deg, #2563eb, #3b82f6) !important;
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.25) !important;
+    }
+    [data-testid="stFileUploader"] section div {
+        color: #64748b !important;
+    }
     
     /* Uploaded Image Custom Sizing */
     [data-testid="stImage"] img {
