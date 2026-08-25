@@ -876,16 +876,23 @@ st.markdown(
     <div class="navbar">
         <div class="nav-left">
             <div class="logo-box">
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <!-- Microscope body -->
-                    <path d="M6 21h12" />
-                    <path d="M9 21v-4" />
-                    <path d="M15 21v-4" />
-                    <path d="M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z" />
-                    <path d="M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0" />
-                    <path d="M10 7V4" />
-                    <path d="M14 7V4" />
-                    <path d="M10 4h4" />
+                <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <!-- Outer cell membrane -->
+                    <ellipse cx="16" cy="16" rx="13" ry="11" stroke="white" stroke-width="2" fill="none" opacity="0.9"/>
+                    <!-- Cell membrane texture bumps -->
+                    <path d="M3.5 13 Q5 10 3.5 7" stroke="white" stroke-width="1.2" fill="none" opacity="0.5"/>
+                    <path d="M28.5 13 Q27 10 28.5 7" stroke="white" stroke-width="1.2" fill="none" opacity="0.5"/>
+                    <!-- Nucleus -->
+                    <ellipse cx="16" cy="16" rx="6" ry="5" stroke="white" stroke-width="1.8" fill="rgba(255,255,255,0.15)"/>
+                    <!-- Nucleolus (solid dot inside nucleus) -->
+                    <circle cx="16" cy="16" r="2" fill="white" opacity="0.9"/>
+                    <!-- Organelle dots scattered in cytoplasm -->
+                    <circle cx="7" cy="13" r="1.2" fill="white" opacity="0.6"/>
+                    <circle cx="9" cy="20" r="0.9" fill="white" opacity="0.5"/>
+                    <circle cx="24" cy="19" r="1.2" fill="white" opacity="0.6"/>
+                    <circle cx="23" cy="11" r="0.8" fill="white" opacity="0.4"/>
+                    <circle cx="12" cy="24" r="0.9" fill="white" opacity="0.5"/>
+                    <circle cx="20" cy="23" r="0.7" fill="white" opacity="0.4"/>
                 </svg>
             </div>
             <div>
