@@ -235,7 +235,7 @@ The trained model was integrated into an interactive application that allows use
 
 ### 🚀 Live Demo
 
-**[Launch ORAL AI →]( https://ddcb8e1e5544ca39fc.gradio.live)**
+**[Launch ORAL AI on Streamlit Cloud →](https://iccbs-intership-project-ekqxcsqdb7qx8ocbjfxqrp.streamlit.app/)**
 
 ---
 
@@ -252,6 +252,10 @@ ICCBS-Intership-Project/
 ├── Oral_Histopathology_Frontend.ipynb
 │   └── Model inference, Grad-CAM explainability,
 │       prediction pipeline, and Gradio interface
+│
+├── app.py
+│   └── Production-level Streamlit web dashboard with interactive
+│       predictions, confidence visualization, and Grad-CAM overlays
 │
 ├── README.md
 ```
@@ -286,7 +290,7 @@ Contains the inference and explainability pipeline including:
 * Class probability distribution
 * Grad-CAM generation
 * Original / heatmap / overlay visualization
-* Interactive Gradio interface
+* Interactive Streamlit dashboard
 
 ---
 
@@ -330,7 +334,7 @@ Contains the inference and explainability pipeline including:
 
 ### Application
 
-* Gradio
+* Streamlit
 
 ### Development Environment
 
@@ -429,4 +433,33 @@ This repository is intended primarily for research and educational purposes.
 Please review the dataset's original licensing and usage terms before using or redistributing any associated data.
 
 ---
+
+## 🚀 Running Locally
+
+To run the Streamlit dashboard locally, follow these steps:
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/MahrukhBaig/ICCBS-Intership-Project.git
+   cd ICCBS-Intership-Project
+   ```
+
+2. **Set up a virtual environment & install dependencies:**
+   ```bash
+   python -m venv venv
+   # On Windows:
+   .\venv\Scripts\activate
+   # On macOS/Linux:
+   source venv/bin/activate
+   
+   pip install -r requirements.txt
+   ```
+
+3. **Add the model checkpoint:**
+   Place your `best_orchid_hybrid_stage2.pth` inside the `models/` directory (or configure `MODEL_URL` in `app.py` to auto-download it).
+
+4. **Launch the dashboard:**
+   ```bash
+   streamlit run app.py
+   ```
 
