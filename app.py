@@ -804,31 +804,54 @@ st.markdown(
         color: #64748b !important;
     }
     
-    /* Style the uploaded file box to be white/transparent instead of black */
+    /* Style the uploaded file chip to be white instead of black — broad override */
+    [data-testid="stFileUploader"] [data-testid="stUploadedFile"],
     [data-testid="stUploadedFile"],
     .stUploadedFile,
-    div[data-testid="stUploadedFile"] {
+    [class*="uploadedFile"],
+    [class*="UploadedFile"],
+    div[data-testid="stFileUploader"] li,
+    div[data-testid="stFileUploader"] ul li {
         background-color: white !important;
+        background: white !important;
         border: 1px solid #cbd5e1 !important;
         border-radius: 10px !important;
         color: #1e293b !important;
-        padding: 8px 12px !important;
     }
-    [data-testid="stUploadedFile"] span,
-    [data-testid="stUploadedFile"] div,
-    [data-testid="stUploadedFile"] p {
+    [data-testid="stUploadedFile"] *,
+    [class*="uploadedFile"] *,
+    [class*="UploadedFile"] * {
+        background-color: transparent !important;
+        background: transparent !important;
         color: #1e293b !important;
     }
-    [data-testid="stUploadedFile"] button {
+    /* Override any small dark pill/badge inside the uploader */
+    [data-testid="stFileUploader"] section ul,
+    [data-testid="stFileUploader"] section li {
+        background-color: white !important;
+        background: white !important;
+        list-style: none !important;
+    }
+    [data-testid="stFileUploader"] section li > div {
+        background-color: white !important;
+        background: white !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 10px !important;
+        color: #1e293b !important;
+    }
+    [data-testid="stFileUploader"] section li > div * {
         background-color: transparent !important;
-        color: #64748b !important;
+        color: #1e293b !important;
+    }
+    [data-testid="stFileUploader"] section li button {
+        background-color: transparent !important;
         border: 1px solid #cbd5e1 !important;
         border-radius: 6px !important;
+        color: #64748b !important;
     }
-    [data-testid="stUploadedFile"] button:hover {
+    [data-testid="stFileUploader"] section li button:hover {
         background-color: #f1f5f9 !important;
         color: #ef4444 !important;
-        border-color: #fca5a5 !important;
     }
     
     /* Uploaded Image Custom Sizing */
@@ -852,12 +875,16 @@ st.markdown(
     <div class="navbar">
         <div class="nav-left">
             <div class="logo-box">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M4.5 10.5C7.5 5.5 16.5 5.5 19.5 10.5" />
-                    <path d="M4.5 13.5C7.5 18.5 16.5 18.5 19.5 13.5" />
-                    <path d="M9 8v8" />
-                    <path d="M12 7v10" />
-                    <path d="M15 8v8" />
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <!-- Microscope body -->
+                    <path d="M6 21h12" />
+                    <path d="M9 21v-4" />
+                    <path d="M15 21v-4" />
+                    <path d="M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z" />
+                    <path d="M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0" />
+                    <path d="M10 7V4" />
+                    <path d="M14 7V4" />
+                    <path d="M10 4h4" />
                 </svg>
             </div>
             <div>
