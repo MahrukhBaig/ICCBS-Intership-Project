@@ -1201,46 +1201,20 @@ st.html(
         <h3 style="margin-top:0; color:#172033; font-weight:800; font-size:22px; margin-bottom: 6px;">🧬 Model Architecture & Statistics</h3>
         <p style="color:#64748b; font-size:14px; margin-bottom: 24px;">ORAL AI is a Hybrid Swin CLIP-Net Model.</p>
         
-        <div style="display: flex; gap: 40px; flex-wrap: wrap;">
-            <!-- Left Side: Architecture Details -->
-            <div style="flex: 2; min-width: 300px;">
-                <h4 style="color:#172033; font-size:15px; font-weight:700; margin-bottom: 12px; border-bottom: 2px solid #eef4ff; padding-bottom: 6px;">Component Architecture</h4>
-                <table style="width: 100%; border-collapse: collapse;">
-                    <tr style="border-bottom: 1px solid #f1f5f9;">
-                        <td style="padding: 10px 0; font-size: 13px; font-weight: 700; color: #64748b; width: 40%;">Visual Backbone</td>
-                        <td style="padding: 10px 0; font-size: 13px; font-weight: 600; color: #1e293b;">Swin Transformer (Tiny)</td>
-                    </tr>
-                    <tr style="border-bottom: 1px solid #f1f5f9;">
-                        <td style="padding: 10px 0; font-size: 13px; font-weight: 700; color: #64748b;">Semantic Encoder</td>
-                        <td style="padding: 10px 0; font-size: 13px; font-weight: 600; color: #1e293b;">CLIP Text Embeddings (ViT-B-16)</td>
-                    </tr>
-                    <tr style="border-bottom: 1px solid #f1f5f9;">
-                        <td style="padding: 10px 0; font-size: 13px; font-weight: 700; color: #64748b;">Fusion Strategy</td>
-                        <td style="padding: 10px 0; font-size: 13px; font-weight: 600; color: #1e293b;">Multi-Stage Cross-Attention</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 10px 0; font-size: 13px; font-weight: 700; color: #64748b;">Decoder Backbone</td>
-                        <td style="padding: 10px 0; font-size: 13px; font-weight: 600; color: #1e293b;">U-Net Inspired Decoder</td>
-                    </tr>
-                </table>
-            </div>
-            
-            <!-- Right Side: Key Performance Metrics -->
-            <div style="flex: 1; min-width: 200px;">
-                <h4 style="color:#172033; font-size:15px; font-weight:700; margin-bottom: 12px; border-bottom: 2px solid #eef4ff; padding-bottom: 6px;">Performance Metrics</h4>
-                <div style="display: flex; flex-direction: column; gap: 12px;">
-                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
-                        <span style="font-size: 12px; font-weight: 700; color: #166534;">Test Accuracy</span>
-                        <span style="font-size: 16px; font-weight: 800; color: #15803d;">95.73%</span>
-                    </div>
-                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
-                        <span style="font-size: 12px; font-weight: 700; color: #166534;">Macro F1-Score</span>
-                        <span style="font-size: 16px; font-weight: 800; color: #15803d;">96.20%</span>
-                    </div>
-                    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
-                        <span style="font-size: 12px; font-weight: 700; color: #166534;">Macro ROC-AUC</span>
-                        <span style="font-size: 16px; font-weight: 800; color: #15803d;">0.9976</span>
-                    </div>
+        <div>
+            <h4 style="color:#172033; font-size:15px; font-weight:700; margin-bottom: 12px; border-bottom: 2px solid #eef4ff; padding-bottom: 6px;">Performance Metrics</h4>
+            <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 200px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 13px; font-weight: 700; color: #166534;">Test Accuracy</span>
+                    <span style="font-size: 18px; font-weight: 800; color: #15803d;">95.73%</span>
+                </div>
+                <div style="flex: 1; min-width: 200px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 13px; font-weight: 700; color: #166534;">Macro F1-Score</span>
+                    <span style="font-size: 18px; font-weight: 800; color: #15803d;">96.20%</span>
+                </div>
+                <div style="flex: 1; min-width: 200px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 13px; font-weight: 700; color: #166534;">Macro ROC-AUC</span>
+                    <span style="font-size: 18px; font-weight: 800; color: #15803d;">0.9976</span>
                 </div>
             </div>
         </div>
