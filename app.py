@@ -1199,7 +1199,7 @@ st.html(
     """
     <div class="model-info-card">
         <h3 style="margin-top:0; color:#172033; font-weight:800; font-size:22px; margin-bottom: 6px;">🧬 Model Architecture & Statistics</h3>
-        <p style="color:#64748b; font-size:14px; margin-bottom: 24px;">ORAL AI is a hybrid multimodal classification model guided by semantic prompts.</p>
+        <p style="color:#64748b; font-size:14px; margin-bottom: 24px;">ORAL AI is a Hybrid Swin CLIP-Net Model.</p>
         
         <div style="display: flex; gap: 40px; flex-wrap: wrap;">
             <!-- Left Side: Architecture Details -->
